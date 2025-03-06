@@ -1,7 +1,15 @@
 #ifndef E1000_H_
 #define E1000_H_
 
+#include <l4/drivers/hw_mmio_register_block>
+#include <l4/vbus/vbus>
+#include <l4/re/util/shared_cap>
+#include <l4/re/util/unique_cap>
+#include <l4/re/rm>
+#include <l4/re/dma_space>
 #include <cstdint>
+#include "debug.h"
+
 
 #define INTEL_VEND     0x8086  // Vendor ID for Intel 
 #define E1000_DEV      0x100E  // Device ID for the e1000 Qemu, Bochs, and VirtualBox emmulated NICs
@@ -122,35 +130,55 @@ struct e1000_tx_desc {
         volatile uint16_t special;
 } __attribute__((packed));
 
+struct phy_space {
+        L4Re::Util::Unique_cap<L4Re::Dataspace> cap;
+        L4Re::Rm::Unique_region<struct e1000_rx_desc *> rm;
+        L4Re::Dma_space::Dma_addr paddr;
+        L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space;    
+};
+
 class E1000 
 {
     private:
-        
         uint8_t bar_type;     // Type of BAR0
         uint16_t io_base;     // IO Base Address
         uint64_t  mem_base;   // MMIO Base Address
-        bool eerprom_exists;  // A flag indicating if eeprom exists
+        L4drivers::Register_block<32> _regs;
+        bool eeprom_exists;  // A flag indicating if eeprom exists
         uint8_t mac [6];      // A buffer for storing the mack address
-        struct e1000_rx_desc *rx_descs[E1000_NUM_RX_DESC]; // Receive Descriptor Buffers
-        struct e1000_tx_desc *tx_descs[E1000_NUM_TX_DESC]; // Transmit Descriptor Buffers
         uint16_t rx_cur;      // Current Receive Descriptor Buffer
         uint16_t tx_cur;      // Current Transmit Descriptor Buffer
-       
+        struct e1000_rx_desc *rx_descs[E1000_NUM_RX_DESC]; // Receive Descriptor Buffers
+        struct e1000_tx_desc *tx_descs[E1000_NUM_TX_DESC]; // Transmit Descriptor Buffers
+
+        void dmalloc (unsigned memsz, struct phy_space* phys);       
+        int  dma_map(L4::Cap<L4Re::Dataspace> ds, l4_addr_t offset,
+                l4_size_t size, L4Re::Dma_space::Direction dir,
+                L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space,
+                L4Re::Dma_space::Dma_addr *phys);
+
+        struct phy_space rx_phys;
+        struct phy_space rx_data_phys;        
+        struct phy_space tx_phys;    
+
         
 public:  /* todo reset original public */       
         // Send Commands and read results From NICs either using MMIO or IO Ports
+        void setRegs(L4drivers::Register_block<32> regs);
+
         void writeCommand( uint16_t p_address, uint32_t p_value);
         uint32_t readCommand(uint16_t p_address);
+        
 
-
+/*public:*/
         bool detectEEProm(); // Return true if EEProm exist, else it returns false and set the eerprom_existsdata member
         uint32_t eepromRead( uint8_t addr); // Read 4 bytes from a specific EEProm Address
         bool readMACAddress();       // Read MAC Address
-#if 0
-        void startLink ();           // Start up the network
         void rxinit();               // Initialize receive descriptors an buffers
         void txinit();               // Initialize transmit descriptors an buffers
         void enableInterrupt();      // Enable Interrupts
+#if 0
+        void startLink ();           // Start up the network
         void handleReceive();        // Handle a packet reception.
     public:
 #endif
