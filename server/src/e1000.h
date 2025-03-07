@@ -3,12 +3,14 @@
 
 #include <l4/drivers/hw_mmio_register_block>
 #include <l4/vbus/vbus>
+#include <l4/re/dma_space>
+#include <l4/re/rm>
 #include <l4/re/util/shared_cap>
 #include <l4/re/util/unique_cap>
-#include <l4/re/rm>
-#include <l4/re/dma_space>
 #include <cstdint>
+#include <l4/re/util/object_registry>
 #include "debug.h"
+#include <l4/re/error_helper>
 
 
 #define INTEL_VEND     0x8086  // Vendor ID for Intel 
@@ -107,6 +109,13 @@
 #define TSTA_LC                         (1 << 2)    // Late Collision
 #define LSTA_TU                         (1 << 3)    // Transmit Underrun
 
+// CTRL register
+#define CTRL_FD                         (1 << 0)   // Full Duplex
+#define CTRL_ASDE                       (1 << 5)   // Auto-Speed Detection Enable
+#define CTRL_SLU                        (1 << 6)   // Set Link Up
+
+// STATUS register
+#define STATUS_LU                       (1 << 1)    // Link Up Indication
 
 #define E1000_NUM_RX_DESC 32
 #define E1000_NUM_TX_DESC 8
@@ -130,20 +139,91 @@ struct e1000_tx_desc {
         volatile uint16_t special;
 } __attribute__((packed));
 
+template <typename T>
 struct phy_space {
         L4Re::Util::Unique_cap<L4Re::Dataspace> cap;
-        L4Re::Rm::Unique_region<struct e1000_rx_desc *> rm;
+        L4Re::Rm::Unique_region<T> rm;
         L4Re::Dma_space::Dma_addr paddr;
-        L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space;    
+        L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space;
+
+        static int dma_map(L4::Cap<L4Re::Dataspace> ds, l4_addr_t offset,
+                    l4_size_t size, L4Re::Dma_space::Direction dir,
+                    L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space,
+                    L4Re::Dma_space::Dma_addr *phys)
+        {
+                l4_size_t out_size = size;
+
+                printf("dma_space map start\n");
+
+                auto ret = dma_space->map(L4::Ipc::make_cap_rw(ds), offset, &out_size,
+                                                  L4Re::Dma_space::Attributes::None, dir, phys);
+                printf("dma_space map end\n");
+
+                if (ret < 0 || out_size < size)
+                {
+                        *phys = 0;
+                        printf("Cannot resolve physical address (ret = %ld, %zu < %zu).\n",
+                                           ret, out_size, size);
+                        return -L4_ENOMEM;
+                }
+
+                return L4_EOK;
+        }
+
+        static void dmalloc(unsigned memsz, struct phy_space<T> *phys)
+        {
+                phys->cap = L4Re::chkcap(L4Re::Util::make_unique_cap<L4Re::Dataspace>(),
+                                         "Allocate capability for descriptors.");
+
+                printf("dmalloc make_unique_cap...\n");
+
+                auto *e = L4Re::Env::env();
+
+                L4Re::chksys(e->mem_alloc()->alloc(memsz, phys->cap.get(),
+                                                   L4Re::Mem_alloc::Continuous | L4Re::Mem_alloc::Pinned),
+                             "Allocate memory.");
+
+                printf("dmalloc mem_alloc...\n");
+
+                L4Re::chksys(e->rm()->attach(&phys->rm, memsz,
+                                             L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
+                                             L4::Ipc::make_cap_rw(phys->cap.get()), 0,
+                                             L4_PAGESHIFT),
+                             "Attach memory to virtual memory.");
+
+                printf("dmalloc rm attach...\n");
+
+                phys->dma_space = L4Re::chkcap(L4Re::Util::make_shared_cap<L4Re::Dma_space>(),
+                                        "Allocate capability for DMA space.");
+
+                /*auto bus = L4Re::chkcap(L4Re::Env::env()->get_cap<L4vbus::Vbus>("vbus"),
+                                        "Get 'vbus' capability.", -L4_ENOENT);
+                                                     
+
+                L4Re::chksys(bus->assign_dma_domain(0x44414D44, L4VBUS_DMAD_BIND | L4VBUS_DMAD_L4RE_DMA_SPACE,
+                        phys->dma_space.get()),
+                        "Assignment of DMA domain.");*/
+
+                L4Re::chksys(L4Re::Env::env()->user_factory()->create( phys->dma_space.get()),
+                             "Create DMA space.");
+
+                L4Re::chksys(dma_map(phys->cap.get(), 0, memsz,
+                                     L4Re::Dma_space::Direction::Bidirectional,
+                                     phys->dma_space,
+                                     &phys->paddr),
+                             "Attach memory to DMA space.");
+                printf("dmalloc dma_map...\n");
+        }
 };
 
-class E1000 
+class E1000 : public L4::Irqep_t<E1000>
 {
     private:
         uint8_t bar_type;     // Type of BAR0
         uint16_t io_base;     // IO Base Address
         uint64_t  mem_base;   // MMIO Base Address
         L4drivers::Register_block<32> _regs;
+        int _irqnum;
         bool eeprom_exists;  // A flag indicating if eeprom exists
         uint8_t mac [6];      // A buffer for storing the mack address
         uint16_t rx_cur;      // Current Receive Descriptor Buffer
@@ -151,45 +231,42 @@ class E1000
         struct e1000_rx_desc *rx_descs[E1000_NUM_RX_DESC]; // Receive Descriptor Buffers
         struct e1000_tx_desc *tx_descs[E1000_NUM_TX_DESC]; // Transmit Descriptor Buffers
 
-        void dmalloc (unsigned memsz, struct phy_space* phys);       
+        /*void dmalloc (unsigned memsz, struct phy_space<T>* phys);       
         int  dma_map(L4::Cap<L4Re::Dataspace> ds, l4_addr_t offset,
                 l4_size_t size, L4Re::Dma_space::Direction dir,
                 L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space,
-                L4Re::Dma_space::Dma_addr *phys);
+                L4Re::Dma_space::Dma_addr *phys);*/
 
-        struct phy_space rx_phys;
-        struct phy_space rx_data_phys;        
-        struct phy_space tx_phys;    
-
+        struct phy_space<struct e1000_rx_desc *> rx_phys;
+        struct phy_space<struct e1000_tx_desc *> tx_phys;
+        struct phy_space<uint8_t*> rx_data_phys;           
         
-public:  /* todo reset original public */       
         // Send Commands and read results From NICs either using MMIO or IO Ports
-        void setRegs(L4drivers::Register_block<32> regs);
-
         void writeCommand( uint16_t p_address, uint32_t p_value);
         uint32_t readCommand(uint16_t p_address);
         
 
-/*public:*/
+public:
         bool detectEEProm(); // Return true if EEProm exist, else it returns false and set the eerprom_existsdata member
         uint32_t eepromRead( uint8_t addr); // Read 4 bytes from a specific EEProm Address
         bool readMACAddress();       // Read MAC Address
         void rxinit();               // Initialize receive descriptors an buffers
         void txinit();               // Initialize transmit descriptors an buffers
         void enableInterrupt();      // Enable Interrupts
-#if 0
-        void startLink ();           // Start up the network
-        void handleReceive();        // Handle a packet reception.
-    public:
-#endif
-
-        E1000();
-        //E1000(PCIConfigHeader * _pciConfigHeader); // Constructor. takes as a parameter a pointer to an object that encapsulate all he PCI configuration data of the device
-#if 0
-        void start ();                             // perform initialization tasks and starts the driver
-        void fire (InterruptContext * p_interruptContext);  // This method should be called by the interrupt handler 
-        uint8_t * getMacAddress ();                         // Returns the MAC address
+        void printMACAddress();
+        void startLink();           // Start up the network
+        bool start();               // perform initialization tasks and starts the driver
+        void register_interrupt_handler(L4::Cap<L4::Icu> icu, L4Re::Util::Object_registry *registry);
+        void handle_irq();
+        void handleReceive();        // Handle a packet reception.        
+        void fire();    // This method should be called by the interrupt handler 
         int sendPacket(const void * p_data, uint16_t p_len);  // Send a packet
+
+        E1000(L4drivers::Register_block<32> regs, int irqnum);
+        //E1000(PCIConfigHeader * _pciConfigHeader); // Constructor. takes as a parameter a pointer to an object that encapsulate all he PCI configuration data of the device
+
+#if 0
+        uint8_t * getMacAddress ();                         // Returns the MAC address
         ~E1000();                                             // Default Destructor
 #endif
 };
