@@ -189,15 +189,22 @@ void E1000::rxinit()
     printf("RX init dmalloc...\n");
 
     descs = (struct e1000_rx_desc *)rx_phys.paddr;
+    printf("descs pointer: %p\n", (void*)descs);
     for(int i = 0; i < E1000_NUM_RX_DESC; i++)
     {
         rx_descs[i] = (struct e1000_rx_desc *)((uint8_t *)descs + i*16);
+        printf("descs pointer: %p\n", (void*)rx_descs[i]);
+
         phy_space<uint8_t*>::dmalloc(8192 + 16, &rx_data_phys);
         rx_descs[i]->addr = (uint64_t)rx_data_phys.paddr;
+        printf("RX init dmalloc... 4\n");
+
         rx_descs[i]->status = 0;
     }
 
     writeCommand(REG_RXDESCLO, (uint32_t)((uint64_t)rx_phys.paddr >> 32) );
+    printf("RX init dmalloc... 5\n");
+
     writeCommand(REG_RXDESCHI, (uint32_t)((uint64_t)rx_phys.paddr & 0xFFFFFFFF));
 
 
@@ -218,6 +225,8 @@ void E1000::txinit()
     // In your case you should handle virtual and physical addresses as the addresses passed to the NIC should be physical ones
     //ptr = (uint8_t *)(kmalloc_ptr->khmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC + 16));
     phy_space<struct e1000_tx_desc*>::dmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC + 16, &tx_phys);
+
+    printf("TX init dmalloc...\n");
 
     descs = (struct e1000_tx_desc *)tx_phys.paddr;
     for(int i = 0; i < E1000_NUM_TX_DESC; i++)

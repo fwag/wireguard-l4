@@ -142,6 +142,7 @@ struct e1000_tx_desc {
 template <typename T>
 struct phy_space {
         L4Re::Util::Unique_cap<L4Re::Dataspace> cap;
+        //L4::Cap<L4Re::Dataspace> cap;
         L4Re::Rm::Unique_region<T> rm;
         L4Re::Dma_space::Dma_addr paddr;
         L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space;
@@ -153,11 +154,8 @@ struct phy_space {
         {
                 l4_size_t out_size = size;
 
-                printf("dma_space map start\n");
-
                 auto ret = dma_space->map(L4::Ipc::make_cap_rw(ds), offset, &out_size,
                                                   L4Re::Dma_space::Attributes::None, dir, phys);
-                printf("dma_space map end\n");
 
                 if (ret < 0 || out_size < size)
                 {
@@ -170,10 +168,12 @@ struct phy_space {
                 return L4_EOK;
         }
 
+        //void Mmio_data_space::alloc_ram(Size size, unsigned long alloc_flags), resource.cc
         static void dmalloc(unsigned memsz, struct phy_space<T> *phys)
         {
                 phys->cap = L4Re::chkcap(L4Re::Util::make_unique_cap<L4Re::Dataspace>(),
                                          "Allocate capability for descriptors.");
+                               
 
                 printf("dmalloc make_unique_cap...\n");
 
@@ -196,16 +196,11 @@ struct phy_space {
                 phys->dma_space = L4Re::chkcap(L4Re::Util::make_shared_cap<L4Re::Dma_space>(),
                                         "Allocate capability for DMA space.");
 
-                /*auto bus = L4Re::chkcap(L4Re::Env::env()->get_cap<L4vbus::Vbus>("vbus"),
-                                        "Get 'vbus' capability.", -L4_ENOENT);
-                                                     
-
-                L4Re::chksys(bus->assign_dma_domain(0x44414D44, L4VBUS_DMAD_BIND | L4VBUS_DMAD_L4RE_DMA_SPACE,
-                        phys->dma_space.get()),
-                        "Assignment of DMA domain.");*/
-
                 L4Re::chksys(L4Re::Env::env()->user_factory()->create( phys->dma_space.get()),
                              "Create DMA space.");
+                L4Re::chksys(phys->dma_space->associate(L4::Ipc::Cap<L4::Task>(),
+                             L4Re::Dma_space::Space_attrib::Phys_space),
+                                "associating DMA space for CPU physical");
 
                 L4Re::chksys(dma_map(phys->cap.get(), 0, memsz,
                                      L4Re::Dma_space::Direction::Bidirectional,
@@ -213,6 +208,8 @@ struct phy_space {
                                      &phys->paddr),
                              "Attach memory to DMA space.");
                 printf("dmalloc dma_map...\n");
+
+                printf("paddr: %llX\n", phys->paddr);
         }
 };
 
