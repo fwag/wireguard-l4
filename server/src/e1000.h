@@ -25,7 +25,10 @@
 #define REG_STATUS      0x0008
 #define REG_EEPROM      0x0014
 #define REG_CTRL_EXT    0x0018
+#define REG_ICR         0x00C0 // Interrupt Cause Register
+#define REG_ICS         0x00C8 // Interrupt Cause Set Register
 #define REG_IMASK       0x00D0
+#define REG_IMC         0x00D8 // Interrupt Mask Clear
 #define REG_RCTRL       0x0100
 #define REG_RXDESCLO    0x2800
 #define REG_RXDESCHI    0x2804
@@ -46,11 +49,10 @@
 #define REG_RADV         0x282C // RX Int. Absolute Delay Timer
 #define REG_RSRPD        0x2C00 // RX Small Packet Detect Interrupt
 
-
-
 #define REG_TIPG         0x0410      // Transmit Inter Packet Gap
 #define ECTRL_SLU        0x40        //set link up
 
+#define REG_TNCRS       0x4034      //Transmit with No CRS
 
 #define RCTL_EN                         (1 << 1)    // Receiver Enable
 #define RCTL_SBP                        (1 << 2)    // Store Bad Packets
@@ -145,7 +147,8 @@ struct phy_space {
         //L4::Cap<L4Re::Dataspace> cap;
         L4Re::Rm::Unique_region<T> rm;
         L4Re::Dma_space::Dma_addr paddr;
-        L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space;
+        //L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space;
+        L4Re::Util::Unique_cap<L4Re::Dma_space> dma_space;
 
         static int dma_map(L4::Cap<L4Re::Dataspace> ds, l4_addr_t offset,
                     l4_size_t size, L4Re::Dma_space::Direction dir,
@@ -171,45 +174,53 @@ struct phy_space {
         //void Mmio_data_space::alloc_ram(Size size, unsigned long alloc_flags), resource.cc
         static void dmalloc(unsigned memsz, struct phy_space<T> *phys)
         {
+                phys->dma_space = L4Re::chkcap(L4Re::Util::make_unique_cap<L4Re::Dma_space>(),
+                                        "Allocate capability for DMA space.");
+
+                L4Re::chksys(L4Re::Env::env()->user_factory()->create( phys->dma_space.get()),
+                        "Create DMA space.");
+
+                L4Re::chksys(phys->dma_space->associate(L4::Ipc::Cap<L4::Task>(),
+                                                        L4Re::Dma_space::Space_attrib::Phys_space),
+                             "associating DMA space for CPU physical");                        
+                
                 phys->cap = L4Re::chkcap(L4Re::Util::make_unique_cap<L4Re::Dataspace>(),
-                                         "Allocate capability for descriptors.");
+                                "Allocate capability for descriptors.");
                                
 
-                printf("dmalloc make_unique_cap...\n");
+                //printf("dmalloc make_unique_cap...\n");
 
                 auto *e = L4Re::Env::env();
 
                 L4Re::chksys(e->mem_alloc()->alloc(memsz, phys->cap.get(),
-                                                   L4Re::Mem_alloc::Continuous | L4Re::Mem_alloc::Pinned),
+                                                   L4Re::Mem_alloc::Continuous),// | L4Re::Mem_alloc::Pinned),
                              "Allocate memory.");
 
-                printf("dmalloc mem_alloc...\n");
+                //printf("dmalloc mem_alloc...\n");
 
-                L4Re::chksys(e->rm()->attach(&phys->rm, memsz,
-                                             L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
-                                             L4::Ipc::make_cap_rw(phys->cap.get()), 0,
-                                             L4_PAGESHIFT),
-                             "Attach memory to virtual memory.");
-
-                printf("dmalloc rm attach...\n");
-
-                phys->dma_space = L4Re::chkcap(L4Re::Util::make_shared_cap<L4Re::Dma_space>(),
-                                        "Allocate capability for DMA space.");
-
-                L4Re::chksys(L4Re::Env::env()->user_factory()->create( phys->dma_space.get()),
-                             "Create DMA space.");
-                L4Re::chksys(phys->dma_space->associate(L4::Ipc::Cap<L4::Task>(),
-                             L4Re::Dma_space::Space_attrib::Phys_space),
-                                "associating DMA space for CPU physical");
-
-                L4Re::chksys(dma_map(phys->cap.get(), 0, memsz,
+                /*L4Re::chksys(dma_map(phys->cap.get(), 0, memsz,
                                      L4Re::Dma_space::Direction::Bidirectional,
                                      phys->dma_space,
                                      &phys->paddr),
-                             "Attach memory to DMA space.");
-                printf("dmalloc dma_map...\n");
+                             "Attach memory to DMA space.");*/
+                l4_size_t ds_size = memsz;
+                L4Re::chksys(phys->dma_space->map(L4::Ipc::make_cap_rw(phys->cap.get()), 0, &ds_size,
+                             L4Re::Dma_space::Attributes::None,
+                             L4Re::Dma_space::Bidirectional,
+                             &phys->paddr));    
+                if (memsz > ds_size)
+                        throw(L4::Out_of_memory("not really"));                                                      
+                //printf("dmalloc dma_map...\n");                
 
-                printf("paddr: %llX\n", phys->paddr);
+                L4Re::chksys(e->rm()->attach(&phys->rm, memsz,
+                                             L4Re::Rm::F::Search_addr | L4Re::Rm::F::Eager_map | L4Re::Rm::F::RW,
+                                             L4::Ipc::make_cap_rw(phys->cap.get())), //, 0, L4_PAGESHIFT),
+                             "Attach memory to virtual memory.");
+
+                //printf("dmalloc rm attach...\n");
+
+                //printf("paddr: %llX\n", phys->paddr);
+                //printf("virt addr: %llX\n", phys->rm);
         }
 };
 

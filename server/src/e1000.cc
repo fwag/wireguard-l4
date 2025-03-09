@@ -2,6 +2,7 @@
 #include "ports.h"
 #include "mmioutils.h"
 #include <cstdio>
+#include <cstring>
 #include <l4/re/error_helper>
 #include <l4/re/env>
 #include <l4/util/util.h>
@@ -121,61 +122,6 @@ void E1000::printMACAddress()
     printf("\n");
 }
 
-/*int E1000::dma_map(L4::Cap<L4Re::Dataspace> ds, l4_addr_t offset,
-                   l4_size_t size, L4Re::Dma_space::Direction dir,
-                   L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space,
-                   L4Re::Dma_space::Dma_addr *phys)
-{
-    l4_size_t out_size = size;
-
-    printf("dma_space map start\n");                              
-
-    auto ret = rx_phys.dma_space->map(L4::Ipc::make_cap_rw(ds), offset, &out_size,
-                              L4Re::Dma_space::Attributes::None, dir, phys);
-    printf("dma_space map end\n");                              
-
-    if (ret < 0 || out_size < size)
-    {
-        *phys = 0;
-        Dbg::info().printf("Cannot resolve physical address (ret = %ld, %zu < %zu).\n",
-                           ret, out_size, size);
-        return -L4_ENOMEM;
-    }
-
-    return L4_EOK;
-}
-
-void E1000::dmalloc (unsigned memsz, struct phy_space<T>* phys) 
-{    
-    phys->cap = L4Re::chkcap(L4Re::Util::make_unique_cap<L4Re::Dataspace>(),
-        "Allocate capability for descriptors.");
-
-    printf("dmalloc make_unique_cap...\n");
-
-    auto *e = L4Re::Env::env();
-
-    L4Re::chksys(e->mem_alloc()->alloc(memsz, phys->cap.get(),
-                L4Re::Mem_alloc::Continuous | L4Re::Mem_alloc::Pinned),
-                "Allocate memory.");
-
-    printf("dmalloc mem_alloc...\n");
-
-    L4Re::chksys(e->rm()->attach(&phys->rm, memsz,
-                                 L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
-                                 L4::Ipc::make_cap_rw(phys->cap.get()), 0,
-                                 L4_PAGESHIFT),
-                 "Attach memory to virtual memory.");
-
-    printf("dmalloc rm attach...\n");
-
-    L4Re::chksys(dma_map(phys->cap.get(), 0, memsz,
-                         L4Re::Dma_space::Direction::Bidirectional,
-                         phys->dma_space,
-                         &phys->paddr),
-                 "Attach memory to DMA space.");
-    printf("dmalloc dma_map...\n");
-}*/
-
 void E1000::rxinit()
 {
     struct e1000_rx_desc *descs;
@@ -186,25 +132,21 @@ void E1000::rxinit()
     //phy_space<struct e1000_rx_desc*> rx_phy_space;
     phy_space<struct e1000_rx_desc*>::dmalloc(sizeof(struct e1000_rx_desc)*E1000_NUM_RX_DESC + 16, &rx_phys);
 
-    printf("RX init dmalloc...\n");
+    //printf("vaddr: %llX\n", rx_phys.rm.get());
 
-    descs = (struct e1000_rx_desc *)rx_phys.paddr;
-    printf("descs pointer: %p\n", (void*)descs);
+    descs = (struct e1000_rx_desc *)rx_phys.rm.get();
+    //printf("descs pointer: %p\n", (void*)descs);
     for(int i = 0; i < E1000_NUM_RX_DESC; i++)
     {
         rx_descs[i] = (struct e1000_rx_desc *)((uint8_t *)descs + i*16);
-        printf("descs pointer: %p\n", (void*)rx_descs[i]);
+        //printf("descs pointer: %p\n", (void*)rx_descs[i]);
 
         phy_space<uint8_t*>::dmalloc(8192 + 16, &rx_data_phys);
         rx_descs[i]->addr = (uint64_t)rx_data_phys.paddr;
-        printf("RX init dmalloc... 4\n");
-
         rx_descs[i]->status = 0;
     }
 
     writeCommand(REG_RXDESCLO, (uint32_t)((uint64_t)rx_phys.paddr >> 32) );
-    printf("RX init dmalloc... 5\n");
-
     writeCommand(REG_RXDESCHI, (uint32_t)((uint64_t)rx_phys.paddr & 0xFFFFFFFF));
 
 
@@ -226,9 +168,8 @@ void E1000::txinit()
     //ptr = (uint8_t *)(kmalloc_ptr->khmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC + 16));
     phy_space<struct e1000_tx_desc*>::dmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC + 16, &tx_phys);
 
-    printf("TX init dmalloc...\n");
-
-    descs = (struct e1000_tx_desc *)tx_phys.paddr;
+    printf("paddr: %llX\n", tx_phys.paddr);
+    descs = (struct e1000_tx_desc *)tx_phys.rm.get();
     for(int i = 0; i < E1000_NUM_TX_DESC; i++)
     {
         tx_descs[i] = (struct e1000_tx_desc *)((uint8_t*)descs + i*16);
@@ -266,7 +207,7 @@ void E1000::enableInterrupt()
 {
     writeCommand(REG_IMASK ,0x1F6DC);
     writeCommand(REG_IMASK ,0xff & ~4);
-    readCommand(0xc0);
+    readCommand(REG_ICR);
 }
 
 void E1000::handle_irq() {
@@ -334,6 +275,8 @@ bool E1000::start()
 
     printf("RX init...\n");
     //enableInterrupt();
+    writeCommand(REG_IMC, 0xffffffff); //to remove
+    writeCommand(REG_IMASK, (1 << 0)); //to remove
     rxinit();
     printf("TX init...\n");
     txinit();        
@@ -384,13 +327,45 @@ void E1000::handleReceive()
 
 int E1000::sendPacket(const void * p_data, uint16_t p_len)
 {    
+    printf("ICR: %X\n", readCommand(REG_ICR));
+
+    memset(tx_descs[tx_cur], 0, sizeof(struct e1000_tx_desc));
+
     tx_descs[tx_cur]->addr = (uint64_t)p_data;
     tx_descs[tx_cur]->length = p_len;
-    tx_descs[tx_cur]->cmd = CMD_EOP | CMD_IFCS | CMD_RS;
+    tx_descs[tx_cur]->cmd = CMD_EOP | CMD_IFCS | CMD_RS | (1 << 4);
     tx_descs[tx_cur]->status = 0;
     uint8_t old_cur = tx_cur;
     tx_cur = (tx_cur + 1) % E1000_NUM_TX_DESC;
-    writeCommand(REG_TXDESCTAIL, tx_cur);   
-    while(!(tx_descs[old_cur]->status & 0xff));    
+
+    printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
+    writeCommand(REG_TXDESCTAIL, tx_cur);  
+    //writeCommand(REG_ICS, (1 << 0)); 
+
+    printf("addr: %lX, len: %u, cmd: %X\n",
+        tx_descs[old_cur]->addr,
+        tx_descs[old_cur]->length,
+        tx_descs[old_cur]->cmd);
+    printf("TCTL: %x\n", readCommand(REG_TCTRL));
+
+    /*printf("TDT: %x\n", readCommand(REG_TXDESCTAIL));
+    printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
+    printf("TDLEN: %x\n", readCommand(REG_TXDESCLEN));
+    printf("TDBAH: %x\n", readCommand(REG_TXDESCHI));
+    printf("TDBAL: %x\n", readCommand(REG_TXDESCLO));
+    printf("IMS: %x\n", readCommand(REG_IMASK));
+
+    printf("sendp 1\n");*/
+    while(!(tx_descs[old_cur]->status & 0xff)) {
+        //printf("status: %X\n", tx_descs[old_cur]->status);
+        printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
+        printf("ICR: %X\n", readCommand(REG_ICR));
+        printf("STATUS: %X\n", readCommand(REG_STATUS));
+
+        //printf("TNCRS: %X\n", readCommand(REG_TNCRS));
+
+        l4_sleep(1000);
+    }
+    printf("sendp 2\n");    
     return 0;
 }

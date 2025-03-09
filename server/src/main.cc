@@ -8,6 +8,7 @@
 #include <l4/util/util.h>
 
 #include <cstdio>
+#include <cstring>
 #include "e1000.h"
 #include "mmio.h"
 
@@ -144,6 +145,8 @@ int main(void)
     //e1000drv.register_interrupt_handler(icu, server.registry());
     e1000drv.start();
 
+
+
     // server.loop();
     uint8_t ethernet_packet[] = {
         // Destination MAC: ce:a0:ca:d3:a5:17
@@ -154,13 +157,32 @@ int main(void)
         0x08, 0x00,
         // Payload (dummy data, can be adjusted)
         0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
-        0x44, 0x55, 0x66, 0x77, 0x88, 0x99};
+        0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
+        0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
+        0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
+        0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
+        0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
+        0xde, 0xad      
+      };
 
+    phy_space<uint8_t*> packet;
+    phy_space<uint8_t*>::dmalloc(sizeof(ethernet_packet), &packet);
+    uint8_t* vaddr = (uint8_t*)packet.rm.get();
+    memcpy(vaddr, ethernet_packet, sizeof(ethernet_packet));
+
+    /*for (unsigned i=0; i < sizeof(ethernet_packet); i++)
+    {
+      printf("%X ", vaddr[i]);
+    }
+    printf("\n");*/
+    const uint8_t* paddr = (uint8_t*)packet.paddr;
+
+    printf("packet paddr: %llX %p\n", packet.paddr, paddr);
     while (1)
     {
       printf("sending packet ...\n");
-      e1000drv.sendPacket(ethernet_packet, sizeof(e1000drv));
-      l4_sleep(1000);
+      e1000drv.sendPacket((const void*)paddr, sizeof(ethernet_packet));
+      l4_sleep(5000);
     }
   }
 }
