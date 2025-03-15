@@ -166,13 +166,14 @@ void E1000::txinit()
     // Allocate buffer for receive descriptors. For simplicity, in my case khmalloc returns a virtual address that is identical to it physical mapped address.
     // In your case you should handle virtual and physical addresses as the addresses passed to the NIC should be physical ones
     //ptr = (uint8_t *)(kmalloc_ptr->khmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC + 16));
-    phy_space<struct e1000_tx_desc*>::dmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC + 16, &tx_phys);
+    phy_space<uint8_t*>::dmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC /*+ 16*/, &tx_phys);
 
-    printf("paddr: %llX\n", tx_phys.paddr);
+    printf("paddr: %llX vaddr: %lX\n", tx_phys.paddr, (uint64_t)tx_phys.rm.get());
     descs = (struct e1000_tx_desc *)tx_phys.rm.get();
     for(int i = 0; i < E1000_NUM_TX_DESC; i++)
     {
         tx_descs[i] = (struct e1000_tx_desc *)((uint8_t*)descs + i*16);
+        printf("td_descs[i] %lX\n", (uint64_t)tx_descs[i]);
         tx_descs[i]->addr = 0;
         tx_descs[i]->cmd = 0;
         tx_descs[i]->status = TSTA_DD;
@@ -195,6 +196,17 @@ void E1000::txinit()
         | (15 << TCTL_CT_SHIFT)
         | (64 << TCTL_COLD_SHIFT)
         | TCTL_RTLC);
+
+    writeCommand(REG_TIPG, 10 << REG_IGPT_SHIFT | 
+        10 << REG_IGPR1_SHIFT |
+	    10 << REG_IGPR2_SHIFT);
+
+        uint8_t mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};  // Example MAC
+        uint32_t ral = mac[0] | (mac[1] << 8) | (mac[2] << 16) | (mac[3] << 24);
+        uint32_t rah = mac[4] | (mac[5] << 8) | (1 << 31);  // Set RAH_AV bit
+
+    writeCommand(REG_RAL, ral);
+    writeCommand(REG_RAH, rah);
 
     // This line of code overrides the one before it but I left both to highlight that the previous one works with e1000 cards, but for the e1000e cards 
     // you should set the TCTRL register as follows. For detailed description of each bit, please refer to the Intel Manual.
@@ -223,7 +235,7 @@ void E1000::startLink()
     uint32_t ctrl = readCommand(REG_CTRL);
     
     // Enable Auto-Negotiation and Set Full Duplex
-    ctrl |= CTRL_FD | CTRL_ASDE | CTRL_SLU;
+    ctrl |= CTRL_FD | CTRL_ASDE | CTRL_SLU | CTRL_LRST;
     
     // Write back to control register
     writeCommand(REG_CTRL, ctrl);
@@ -327,7 +339,7 @@ void E1000::handleReceive()
 
 int E1000::sendPacket(const void * p_data, uint16_t p_len)
 {    
-    printf("ICR: %X\n", readCommand(REG_ICR));
+    //printf("ICR: %X\n", readCommand(REG_ICR));
 
     memset(tx_descs[tx_cur], 0, sizeof(struct e1000_tx_desc));
 
@@ -335,37 +347,51 @@ int E1000::sendPacket(const void * p_data, uint16_t p_len)
     tx_descs[tx_cur]->length = p_len;
     tx_descs[tx_cur]->cmd = CMD_EOP | CMD_IFCS | CMD_RS | (1 << 4);
     tx_descs[tx_cur]->status = 0;
+
+    /*uint8_t *ptr = (uint8_t*)0x39000;
+    printf("size: %lu\n", sizeof(struct e1000_tx_desc));
+    for (int i=0; i < sizeof(struct e1000_tx_desc); i++) {
+        printf("%02X", ptr[i]);
+    }
+    printf("\n");*/
     uint8_t old_cur = tx_cur;
     tx_cur = (tx_cur + 1) % E1000_NUM_TX_DESC;
 
-    printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
+    //printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
     writeCommand(REG_TXDESCTAIL, tx_cur);  
     //writeCommand(REG_ICS, (1 << 0)); 
 
-    printf("addr: %lX, len: %u, cmd: %X\n",
+    /*printf("addr: %lX, len: %u, cmd: %X\n",
         tx_descs[old_cur]->addr,
         tx_descs[old_cur]->length,
         tx_descs[old_cur]->cmd);
     printf("TCTL: %x\n", readCommand(REG_TCTRL));
 
-    /*printf("TDT: %x\n", readCommand(REG_TXDESCTAIL));
+    printf("TDT: %x\n", readCommand(REG_TXDESCTAIL));
     printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
     printf("TDLEN: %x\n", readCommand(REG_TXDESCLEN));
     printf("TDBAH: %x\n", readCommand(REG_TXDESCHI));
     printf("TDBAL: %x\n", readCommand(REG_TXDESCLO));
     printf("IMS: %x\n", readCommand(REG_IMASK));
 
-    printf("sendp 1\n");*/
-    while(!(tx_descs[old_cur]->status & 0xff)) {
+    //printf("sendp 1\n");*/
+
+    /*writeCommand( REG_TXDESCHEAD, 0);
+    writeCommand( REG_TXDESCTAIL, 0);
+    l4_sleep(1000);
+    writeCommand( REG_TXDESCTAIL, 1);*/
+
+    while(!(tx_descs[old_cur]->status & 0xff));
+    /*{
         //printf("status: %X\n", tx_descs[old_cur]->status);
         printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
-        printf("ICR: %X\n", readCommand(REG_ICR));
+        //printf("ICR: %X\n", readCommand(REG_ICR));
         printf("STATUS: %X\n", readCommand(REG_STATUS));
 
         //printf("TNCRS: %X\n", readCommand(REG_TNCRS));
 
         l4_sleep(1000);
-    }
-    printf("sendp 2\n");    
+    }*/
+    //printf("sendp 2\n");    
     return 0;
 }

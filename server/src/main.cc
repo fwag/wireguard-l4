@@ -43,6 +43,15 @@ static bool is_net_device(L4vbus::Device const &dev, l4vbus_device_t const &dev_
   // seems to be a PCI device
   printf("Found PCI Device. Vendor 0x%x\n", val);
 
+  l4_uint32_t cmd;
+  L4Re::chksys(pdev.cfg_read(0x04, &cmd, 16), "Read PCI cfg command.");
+  if (!(cmd & 4))
+  {
+    printf("Enable PCI bus master.\n");
+    cmd |= 4;
+    L4Re::chksys(pdev.cfg_write(0x04, cmd, 16), "Write PCI cfg command.");
+  }  
+
   return (val == 0x100e8086);
 }
 
@@ -106,7 +115,7 @@ int main(void)
         printf("id: %X, type: %u, start: %lX end: %lX\n", res.id, res.type, res.start, res.end);
         if (res.type == L4VBUS_RESOURCE_MEM)
         {
-          printf("id: %X, start: %lX end: %lX\n", res.id, res.start, res.end);
+          //printf("id: %X, start: %lX end: %lX\n", res.id, res.start, res.end);
           if (!mmio_initialized)
           {
             l4_uint64_t addr = res.start;
@@ -124,6 +133,11 @@ int main(void)
         else if (res.type == L4VBUS_RESOURCE_IRQ)
         {
           irqno = res.start;
+        }
+        else if(res.type == L4VBUS_RESOURCE_DMA_DOMAIN)
+        {
+          printf("id dma: %lu\n", res.start);
+
         }
         else if (res.type == L4VBUS_RESOURCE_PORT)
         {
@@ -154,7 +168,7 @@ int main(void)
         // Source MAC: 52:54:00:12:34:56
         0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
         // EtherType: 0x0800 (IPv4, can be changed)
-        0x08, 0x00,
+        0x00, 0x00,
         // Payload (dummy data, can be adjusted)
         0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
         0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
