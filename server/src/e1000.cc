@@ -7,10 +7,10 @@
 #include <l4/re/env>
 #include <l4/util/util.h>
 
-E1000::E1000(L4drivers::Register_block<32> regs, int irqnum) 
+E1000::E1000(L4vbus::Pci_dev dev, L4drivers::Register_block<32> regs) 
 {
+    _dev = dev;
     _regs = regs;
-    _irqnum = irqnum;
     bar_type = 0;
     eeprom_exists = false;
 }
@@ -130,9 +130,9 @@ void E1000::rxinit()
  
     //ptr = (uint8_t *)(kmalloc_ptr->khmalloc(sizeof(struct e1000_rx_desc)*E1000_NUM_RX_DESC + 16));
     //phy_space<struct e1000_rx_desc*> rx_phy_space;
-    phy_space<struct e1000_rx_desc*>::dmalloc(sizeof(struct e1000_rx_desc)*E1000_NUM_RX_DESC + 16, &rx_phys);
+    phy_space<uint8_t*>::dmalloc(sizeof(struct e1000_rx_desc)*E1000_NUM_RX_DESC + 16, &rx_phys);
 
-    //printf("vaddr: %llX\n", rx_phys.rm.get());
+    printf("paddr: %llX vaddr: %lX\n", rx_phys.paddr, (uint64_t)rx_phys.rm.get());
 
     descs = (struct e1000_rx_desc *)rx_phys.rm.get();
     //printf("descs pointer: %p\n", (void*)descs);
@@ -141,13 +141,15 @@ void E1000::rxinit()
         rx_descs[i] = (struct e1000_rx_desc *)((uint8_t *)descs + i*16);
         //printf("descs pointer: %p\n", (void*)rx_descs[i]);
 
-        phy_space<uint8_t*>::dmalloc(8192 + 16, &rx_data_phys);
-        rx_descs[i]->addr = (uint64_t)rx_data_phys.paddr;
+        phy_space<uint8_t*>::dmalloc(8192 + 16, &rx_data_phys[i]);
+        //printf("paddr: %llX vaddr: %lX\n", rx_data_phys[i].paddr, (uint64_t)rx_data_phys[i].rm.get());
+
+        rx_descs[i]->addr = (uint64_t)rx_data_phys[i].paddr;
         rx_descs[i]->status = 0;
     }
 
-    writeCommand(REG_RXDESCLO, (uint32_t)((uint64_t)rx_phys.paddr >> 32) );
-    writeCommand(REG_RXDESCHI, (uint32_t)((uint64_t)rx_phys.paddr & 0xFFFFFFFF));
+    writeCommand(REG_RXDESCHI, (uint32_t)((uint64_t)rx_phys.paddr >> 32) );
+    writeCommand(REG_RXDESCLO, (uint32_t)((uint64_t)rx_phys.paddr & 0xFFFFFFFF));
 
 
     writeCommand(REG_RXDESCLEN, E1000_NUM_RX_DESC * 16);
@@ -173,7 +175,7 @@ void E1000::txinit()
     for(int i = 0; i < E1000_NUM_TX_DESC; i++)
     {
         tx_descs[i] = (struct e1000_tx_desc *)((uint8_t*)descs + i*16);
-        printf("td_descs[i] %lX\n", (uint64_t)tx_descs[i]);
+        //printf("td_descs[i] %lX\n", (uint64_t)tx_descs[i]);
         tx_descs[i]->addr = 0;
         tx_descs[i]->cmd = 0;
         tx_descs[i]->status = TSTA_DD;
@@ -197,16 +199,18 @@ void E1000::txinit()
         | (64 << TCTL_COLD_SHIFT)
         | TCTL_RTLC);
 
+#if 1
     writeCommand(REG_TIPG, 10 << REG_IGPT_SHIFT | 
         10 << REG_IGPR1_SHIFT |
 	    10 << REG_IGPR2_SHIFT);
 
-        uint8_t mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};  // Example MAC
-        uint32_t ral = mac[0] | (mac[1] << 8) | (mac[2] << 16) | (mac[3] << 24);
-        uint32_t rah = mac[4] | (mac[5] << 8) | (1 << 31);  // Set RAH_AV bit
+    uint8_t mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};  // Example MAC
+    uint32_t ral = mac[0] | (mac[1] << 8) | (mac[2] << 16) | (mac[3] << 24);
+    uint32_t rah = mac[4] | (mac[5] << 8) | (1 << 31);  // Set RAH_AV bit
 
     writeCommand(REG_RAL, ral);
     writeCommand(REG_RAH, rah);
+#endif
 
     // This line of code overrides the one before it but I left both to highlight that the previous one works with e1000 cards, but for the e1000e cards 
     // you should set the TCTRL register as follows. For detailed description of each bit, please refer to the Intel Manual.
@@ -223,7 +227,10 @@ void E1000::enableInterrupt()
 }
 
 void E1000::handle_irq() {
+    printf("irq rcvd ...\n");
     fire();
+    /*if (!_irq_trigger_type)
+        obj_cap()->unmask();*/
 }
 
 
@@ -260,17 +267,51 @@ void E1000::startLink()
 void E1000::register_interrupt_handler(L4::Cap<L4::Icu> icu,
     L4Re::Util::Object_registry *registry)
 {
+#if 1
+    L4_irq_mode irq_mode;
+
+    // find the interrupt
+    unsigned char polarity;
+    int irq = L4Re::chksys(_dev.irq_enable(&_irq_trigger_type, &polarity),
+                            "Enabling interrupt.");
+
+    printf("Device: interrupt : %d trigger: %d, polarity: %d\n",
+                        irq, (int)_irq_trigger_type, (int)polarity);
+
+    if (_irq_trigger_type == 0)
+        irq_mode = L4_IRQ_F_LEVEL_HIGH;
+    else
+        irq_mode = L4_IRQ_F_EDGE;
+    L4Re::chksys(icu->set_mode(irq, irq_mode), "Set IRQ mode.");                        
 
     printf("Registering server with registry....\n");
     auto cap = L4Re::chkcap(registry->register_irq_obj(this),
                             "Registering IRQ server object.");
 
-    printf("Binding interrupt %d...\n", _irqnum);
-    L4Re::chksys(l4_error(icu->bind(_irqnum, cap)), "Binding interrupt to ICU.");
+    printf("Binding interrupt %d...\n", irq);
+    int ret = L4Re::chksys(l4_error(icu->bind(irq, cap)), "Binding interrupt to ICU.");
 
     printf("Unmasking interrupt...\n");
     L4Re::chksys(l4_ipc_error(cap->unmask(), l4_utcb()),
                  "Unmasking interrupt");
+#else
+
+    L4Re::chkcap(_irq = L4Re::Util::cap_alloc.alloc<L4::Irq>(),
+                 "Allocate IRQ capability slot.");
+    L4Re::chksys(L4Re::Env::env()->factory()->create(_irq),
+                 "Create IRQ capability at factory.");
+
+    L4Re::chksys(icu->set_mode(22, L4_IRQ_F_LEVEL_HIGH), "Set IRQ mode.");
+
+    int ret = L4Re::chksys(l4_error(icu->bind(22, _irq)),
+                           "Bind interrupt to ICU.");
+    _irq_unmask_at_icu = ret == 1;
+
+    if (_irq_unmask_at_icu)
+        icu->unmask(22);
+    else
+        _irq->unmask();
+#endif
 }
 
 bool E1000::start()
@@ -282,13 +323,13 @@ bool E1000::start()
     
     for(int i = 0; i < 0x80; i++)
     {
-        writeCommand(0x5200 + i*4, 0);
+        writeCommand(REG_MTA0 + i*4, 0);
     }
 
     printf("RX init...\n");
-    //enableInterrupt();
-    writeCommand(REG_IMC, 0xffffffff); //to remove
-    writeCommand(REG_IMASK, (1 << 0)); //to remove
+    enableInterrupt();
+    //writeCommand(REG_IMC, 0xffffffff); //to remove
+    //writeCommand(REG_IMASK, (1 << 0)); //to remove
     rxinit();
     printf("TX init...\n");
     txinit();        
@@ -302,7 +343,8 @@ void E1000::fire()
         Without this, the card will spam interrupts as the int-line will stay high. */
     writeCommand(REG_IMASK, 0x1);
 
-    uint32_t status = readCommand(0xc0);
+    uint32_t status = readCommand(REG_ICR);
+    printf("fire status: %u\n", status);
     if (status & 0x04)
     {
         startLink();
@@ -329,6 +371,11 @@ void E1000::handleReceive()
         uint16_t len = rx_descs[rx_cur]->length;
 
         // Here you should inject the received packet into your network stack
+        printf("rxp: ");
+        for (int i=0; i < len; i++) {
+            printf("%02X", buf[i]);
+        }
+        printf("\n");
 
         rx_descs[rx_cur]->status = 0;
         old_cur = rx_cur;
@@ -339,8 +386,6 @@ void E1000::handleReceive()
 
 int E1000::sendPacket(const void * p_data, uint16_t p_len)
 {    
-    //printf("ICR: %X\n", readCommand(REG_ICR));
-
     memset(tx_descs[tx_cur], 0, sizeof(struct e1000_tx_desc));
 
     tx_descs[tx_cur]->addr = (uint64_t)p_data;
@@ -348,50 +393,21 @@ int E1000::sendPacket(const void * p_data, uint16_t p_len)
     tx_descs[tx_cur]->cmd = CMD_EOP | CMD_IFCS | CMD_RS | (1 << 4);
     tx_descs[tx_cur]->status = 0;
 
-    /*uint8_t *ptr = (uint8_t*)0x39000;
-    printf("size: %lu\n", sizeof(struct e1000_tx_desc));
-    for (int i=0; i < sizeof(struct e1000_tx_desc); i++) {
-        printf("%02X", ptr[i]);
-    }
-    printf("\n");*/
     uint8_t old_cur = tx_cur;
     tx_cur = (tx_cur + 1) % E1000_NUM_TX_DESC;
 
-    //printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
     writeCommand(REG_TXDESCTAIL, tx_cur);  
-    //writeCommand(REG_ICS, (1 << 0)); 
-
-    /*printf("addr: %lX, len: %u, cmd: %X\n",
-        tx_descs[old_cur]->addr,
-        tx_descs[old_cur]->length,
-        tx_descs[old_cur]->cmd);
+    /*
     printf("TCTL: %x\n", readCommand(REG_TCTRL));
-
+    printf("ICR: %X\n", readCommand(REG_ICR));
     printf("TDT: %x\n", readCommand(REG_TXDESCTAIL));
     printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
     printf("TDLEN: %x\n", readCommand(REG_TXDESCLEN));
     printf("TDBAH: %x\n", readCommand(REG_TXDESCHI));
     printf("TDBAL: %x\n", readCommand(REG_TXDESCLO));
-    printf("IMS: %x\n", readCommand(REG_IMASK));
-
-    //printf("sendp 1\n");*/
-
-    /*writeCommand( REG_TXDESCHEAD, 0);
-    writeCommand( REG_TXDESCTAIL, 0);
-    l4_sleep(1000);
-    writeCommand( REG_TXDESCTAIL, 1);*/
+    printf("IMS: %x\n", readCommand(REG_IMASK));*/
 
     while(!(tx_descs[old_cur]->status & 0xff));
-    /*{
-        //printf("status: %X\n", tx_descs[old_cur]->status);
-        printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
-        //printf("ICR: %X\n", readCommand(REG_ICR));
-        printf("STATUS: %X\n", readCommand(REG_STATUS));
-
-        //printf("TNCRS: %X\n", readCommand(REG_TNCRS));
-
-        l4_sleep(1000);
-    }*/
-    //printf("sendp 2\n");    
+ 
     return 0;
 }

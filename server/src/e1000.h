@@ -3,6 +3,7 @@
 
 #include <l4/drivers/hw_mmio_register_block>
 #include <l4/vbus/vbus>
+#include <l4/vbus/vbus_pci>
 #include <l4/re/dma_space>
 #include <l4/re/rm>
 #include <l4/re/util/shared_cap>
@@ -47,6 +48,8 @@
 #define REG_IGPT_SHIFT  0
 #define REG_IGPR1_SHIFT 10
 #define REG_IGPR2_SHIFT 20
+
+#define REG_MTA0        0x5200 // Multicast Table Array
 
 
 #define REG_RDTR         0x2820 // RX Delay Timer Register
@@ -183,7 +186,7 @@ struct phy_space {
         //void Mmio_data_space::alloc_ram(Size size, unsigned long alloc_flags), resource.cc
         static void dmalloc(unsigned memsz, struct phy_space<T> *phys)
         {
-                int ret;
+                //int ret;
                 
                 phys->dma_space = L4Re::chkcap(L4Re::Util::make_shared_cap<L4Re::Dma_space>(), //ok
                                         "Allocate capability for DMA space.");
@@ -194,7 +197,7 @@ struct phy_space {
                 auto bus = L4Re::chkcap(L4Re::Env::env()->get_cap<L4vbus::Vbus>("vbus"), //ok
                         "Get 'vbus' capability.", -L4_ENOENT);
                                      
-                ret = L4Re::chksys(bus->assign_dma_domain(0, L4VBUS_DMAD_BIND | L4VBUS_DMAD_L4RE_DMA_SPACE, //ok
+                L4Re::chksys(bus->assign_dma_domain(0, L4VBUS_DMAD_BIND | L4VBUS_DMAD_L4RE_DMA_SPACE, //ok
                    phys->dma_space.get()),
                    "Assignment of DMA domain.");
 
@@ -234,7 +237,7 @@ struct phy_space {
                                      &phys->paddr),
                              "Attach memory to DMA space.");*/
                 l4_size_t ds_size = memsz;
-                ret = L4Re::chksys(phys->dma_space->map(L4::Ipc::make_cap_rw(phys->cap.get()), 0, &ds_size, //ok
+                L4Re::chksys(phys->dma_space->map(L4::Ipc::make_cap_rw(phys->cap.get()), 0, &ds_size, //ok
                              L4Re::Dma_space::Attributes::None,
                              L4Re::Dma_space::Bidirectional,
                              &phys->paddr));    
@@ -273,9 +276,17 @@ class E1000 : public L4::Irqep_t<E1000>
                 L4Re::Util::Shared_cap<L4Re::Dma_space> dma_space,
                 L4Re::Dma_space::Dma_addr *phys);*/
 
-        struct phy_space<struct e1000_rx_desc *> rx_phys;
+        struct phy_space<uint8_t*> rx_phys;
         struct phy_space<uint8_t*> tx_phys;
-        struct phy_space<uint8_t*> rx_data_phys;           
+        struct phy_space<uint8_t*> rx_data_phys[E1000_NUM_RX_DESC];    
+        
+        L4vbus::Pci_dev _dev;
+        unsigned char _irq_trigger_type;
+        
+        // to remove?
+        L4::Cap<L4::Irq> _irq;        ///< interrupt capability
+        bool _irq_unmask_at_icu;
+        
         
         // Send Commands and read results From NICs either using MMIO or IO Ports
         void writeCommand( uint16_t p_address, uint32_t p_value);
@@ -298,7 +309,7 @@ public:
         void fire();    // This method should be called by the interrupt handler 
         int sendPacket(const void * p_data, uint16_t p_len);  // Send a packet
 
-        E1000(L4drivers::Register_block<32> regs, int irqnum);
+        E1000(L4vbus::Pci_dev dev, L4drivers::Register_block<32> regs);
         //E1000(PCIConfigHeader * _pciConfigHeader); // Constructor. takes as a parameter a pointer to an object that encapsulate all he PCI configuration data of the device
 
 #if 0

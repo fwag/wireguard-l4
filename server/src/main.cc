@@ -26,7 +26,8 @@ public:
   { return l4_kip_clock(l4re_kip()); }
 };
 
-L4Re::Util::Registry_server<Loop_hooks> server;
+//L4Re::Util::Registry_server<Loop_hooks> server;
+static L4Re::Util::Registry_server<L4Re::Util::Br_manager_hooks> server;
 
 static bool is_net_device(L4vbus::Device const &dev, l4vbus_device_t const &dev_info);
 
@@ -146,6 +147,7 @@ int main(void)
           }*/
         }
       }
+      break;
     }
     else
     {
@@ -155,13 +157,14 @@ int main(void)
 
   if (found)
   {
-    E1000 e1000drv(regs, irqno);
-    //e1000drv.register_interrupt_handler(icu, server.registry());
+    E1000 e1000drv(child, regs);
+    e1000drv.register_interrupt_handler(icu, server.registry());
     e1000drv.start();
 
 
 
-    // server.loop();
+    server.loop();
+#if 0
     uint8_t ethernet_packet[] = {
         // Destination MAC: ce:a0:ca:d3:a5:17
         0xce, 0xa0, 0xca, 0xd3, 0xa5, 0x17,
@@ -198,5 +201,6 @@ int main(void)
       e1000drv.sendPacket((const void*)paddr, sizeof(ethernet_packet));
       l4_sleep(5000);
     }
+#endif
   }
 }
