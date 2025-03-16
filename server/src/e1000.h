@@ -27,6 +27,7 @@
 #define REG_EEPROM      0x0014
 #define REG_CTRL_EXT    0x0018
 #define REG_ICR         0x00C0 // Interrupt Cause Register
+#define REG_ITR         0x00C4 // Interrupt Throttling Register
 #define REG_ICS         0x00C8 // Interrupt Cause Set Register
 #define REG_IMASK       0x00D0
 #define REG_IMC         0x00D8 // Interrupt Mask Clear
@@ -57,6 +58,9 @@
 #define REG_RADV         0x282C // RX Int. Absolute Delay Timer
 #define REG_RSRPD        0x2C00 // RX Small Packet Detect Interrupt
 
+#define REG_TIDV         0x3820 // TX Interrupt Delay Value - RW
+#define REG_TADV         0x382C // TX Interrupt Absolute Delay Val - RW
+
 #define REG_TIPG         0x0410      // Transmit Inter Packet Gap
 #define REG_RAL          0x5400
 #define REG_RAH          0x5404
@@ -64,6 +68,19 @@
 #define ECTRL_SLU        0x40        //set link up
 
 #define REG_TNCRS       0x4034      //Transmit with No CRS
+
+/* This defines the bits that are set in the Interrupt Mask
+ * Set/Read Register.  Each bit is documented below:
+ *   o RXT0   = Receiver Timer Interrupt (ring 0)
+ *   o TXDW   = Transmit Descriptor Written Back
+ *   o RXDMT0 = Receive Descriptor Minimum Threshold hit (ring 0)
+ *   o RXSEQ  = Receive Sequence Error
+ *   o LSC    = Link Status Change
+ */
+#define IMS_RXT0        (1 << 7) // RXT0 - Receiver Timer Interrupt , RXDW -- Receiver Descriptor Write Back
+#define IMS_LSC         (1 << 3) // LSC  - Link Status Change
+
+#define IMS_ENABLE_MASK (IMS_RXT0 | IMS_LSC)
 
 #define RCTL_EN                         (1 << 1)    // Receiver Enable
 #define RCTL_SBP                        (1 << 2)    // Store Bad Packets
@@ -291,7 +308,8 @@ class E1000 : public L4::Irqep_t<E1000>
         // Send Commands and read results From NICs either using MMIO or IO Ports
         void writeCommand( uint16_t p_address, uint32_t p_value);
         uint32_t readCommand(uint16_t p_address);
-        
+        uint8_t* rxP2VAddress(uint64_t paddr);
+
 
 public:
         bool detectEEProm(); // Return true if EEProm exist, else it returns false and set the eerprom_existsdata member

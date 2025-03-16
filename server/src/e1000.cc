@@ -122,6 +122,18 @@ void E1000::printMACAddress()
     printf("\n");
 }
 
+// physical to virtual address
+uint8_t* E1000::rxP2VAddress(uint64_t paddr) 
+{
+    for(int i = 0; i < E1000_NUM_RX_DESC; i++)
+    {
+        if (paddr >= rx_data_phys[i].paddr && paddr <= rx_data_phys[i].paddr)
+            return rx_data_phys[i].rm.get();
+    }
+
+    return NULL;
+}
+
 void E1000::rxinit()
 {
     struct e1000_rx_desc *descs;
@@ -221,16 +233,31 @@ void E1000::txinit()
 
 void E1000::enableInterrupt()
 {
-    writeCommand(REG_IMASK ,0x1F6DC);
+    /*writeCommand(REG_IMASK ,0x1F6DC);
     writeCommand(REG_IMASK ,0xff & ~4);
+    readCommand(REG_ICR);*/
+
+    writeCommand(REG_TIDV, 0);
+    writeCommand(REG_TADV, 0);
+    // ask e1000 for receive interrupts.
+    writeCommand(REG_RDTR, 0); // interrupt after every received packet (no timer)
+    writeCommand(REG_RADV, 0); // interrupt after every packet (no timer)
+
+    writeCommand(REG_ITR, 0); //Interrupt Throttle interval has expired, and an interrupt will be generated
+
+    writeCommand(REG_IMASK, IMS_RXT0);
     readCommand(REG_ICR);
+
+    writeCommand(REG_IMASK, IMS_ENABLE_MASK);
+    readCommand(REG_STATUS);
 }
 
 void E1000::handle_irq() {
     printf("irq rcvd ...\n");
     fire();
-    /*if (!_irq_trigger_type)
-        obj_cap()->unmask();*/
+    if (!_irq_trigger_type)
+        _irq->unmask();
+        //obj_cap()->unmask();
 }
 
 
@@ -267,7 +294,6 @@ void E1000::startLink()
 void E1000::register_interrupt_handler(L4::Cap<L4::Icu> icu,
     L4Re::Util::Object_registry *registry)
 {
-#if 1
     L4_irq_mode irq_mode;
 
     // find the interrupt
@@ -285,33 +311,15 @@ void E1000::register_interrupt_handler(L4::Cap<L4::Icu> icu,
     L4Re::chksys(icu->set_mode(irq, irq_mode), "Set IRQ mode.");                        
 
     printf("Registering server with registry....\n");
-    auto cap = L4Re::chkcap(registry->register_irq_obj(this),
+    _irq = L4Re::chkcap(registry->register_irq_obj(this),
                             "Registering IRQ server object.");
 
     printf("Binding interrupt %d...\n", irq);
-    int ret = L4Re::chksys(l4_error(icu->bind(irq, cap)), "Binding interrupt to ICU.");
+    int ret = L4Re::chksys(l4_error(icu->bind(irq, _irq)), "Binding interrupt to ICU.");
 
     printf("Unmasking interrupt...\n");
-    L4Re::chksys(l4_ipc_error(cap->unmask(), l4_utcb()),
+    L4Re::chksys(l4_ipc_error(_irq->unmask(), l4_utcb()),
                  "Unmasking interrupt");
-#else
-
-    L4Re::chkcap(_irq = L4Re::Util::cap_alloc.alloc<L4::Irq>(),
-                 "Allocate IRQ capability slot.");
-    L4Re::chksys(L4Re::Env::env()->factory()->create(_irq),
-                 "Create IRQ capability at factory.");
-
-    L4Re::chksys(icu->set_mode(22, L4_IRQ_F_LEVEL_HIGH), "Set IRQ mode.");
-
-    int ret = L4Re::chksys(l4_error(icu->bind(22, _irq)),
-                           "Bind interrupt to ICU.");
-    _irq_unmask_at_icu = ret == 1;
-
-    if (_irq_unmask_at_icu)
-        icu->unmask(22);
-    else
-        _irq->unmask();
-#endif
 }
 
 bool E1000::start()
@@ -341,9 +349,10 @@ void E1000::fire()
 {
     /* This might be needed here if your handler doesn't clear interrupts from each device and must be done before EOI if using the PIC.
         Without this, the card will spam interrupts as the int-line will stay high. */
-    writeCommand(REG_IMASK, 0x1);
+    //writeCommand(REG_IMASK, 0x1);
 
     uint32_t status = readCommand(REG_ICR);
+    writeCommand(REG_ICR, status); 
     printf("fire status: %u\n", status);
     if (status & 0x04)
     {
@@ -367,15 +376,19 @@ void E1000::handleReceive()
     while ((rx_descs[rx_cur]->status & 0x1))
     {
         got_packet = true;
-        uint8_t *buf = (uint8_t *)rx_descs[rx_cur]->addr;
+        //uint8_t *buf = (uint8_t *)rx_descs[rx_cur]->addr;
+        uint8_t *buf = rxP2VAddress(rx_descs[rx_cur]->addr);
         uint16_t len = rx_descs[rx_cur]->length;
 
         // Here you should inject the received packet into your network stack
-        printf("rxp: ");
-        for (int i=0; i < len; i++) {
-            printf("%02X", buf[i]);
+        if (buf != NULL) 
+        {
+            printf("rxp <%u>: ", len);
+            for (int i=0; i < len; i++) {
+                printf("%02X", buf[i]);
+            }
+            printf("\n");
         }
-        printf("\n");
 
         rx_descs[rx_cur]->status = 0;
         old_cur = rx_cur;
