@@ -1,16 +1,16 @@
 #include "e1000.h"
 #include "ports.h"
-#include "mmioutils.h"
 #include <cstdio>
 #include <cstring>
 #include <l4/re/error_helper>
 #include <l4/re/env>
 #include <l4/util/util.h>
 
-E1000::E1000(L4vbus::Pci_dev dev, L4drivers::Register_block<32> regs) 
+E1000::E1000(L4vbus::Pci_dev dev, 
+    L4Re::Util::Shared_cap<L4Re::Dma_space> dma, 
+    L4drivers::Register_block<32> regs)
+    : _dev(dev), _dma(dma), _regs(regs)
 {
-    _dev = dev;
-    _regs = regs;
     bar_type = 0;
     eeprom_exists = false;
 }
@@ -19,7 +19,6 @@ void E1000::writeCommand( uint16_t p_address, uint32_t p_value)
 {
     if ( bar_type == 0 )
     {
-        //MMIOUtils::write32(mem_base+p_address,p_value);
         _regs[p_address] = p_value;
     }
     else
@@ -33,7 +32,6 @@ uint32_t E1000::readCommand( uint16_t p_address)
 {
     if ( bar_type == 0 )
     {
-        //return MMIOUtils::read32(mem_base+p_address);
         return _regs[p_address];
 
     }
@@ -49,8 +47,8 @@ bool E1000::detectEEProm()
     uint32_t val = 0;
 
     /*val = readCommand(0x00010); 
-    printf("EECD register value: 0x%x\n", val);
-    printf("Presence: %u\n", (val & 0x100)>>8);*/
+    Dbg::info().printf("EECD register value: 0x%x\n", val);
+    Dbg::info().printf("Presence: %u\n", (val & 0x100)>>8);*/
 
     writeCommand(REG_EEPROM, 0x1); 
     for(int i = 0; i < 1000 && ! eeprom_exists; i++)
@@ -115,11 +113,11 @@ bool E1000::readMACAddress()
 
 void E1000::printMACAddress() 
 {
-    printf("MAC: ");
+    Dbg::info().printf("MAC: ");
     for (int i=0; i <= 5; i++) {
-        printf("%X ",mac[i]);
+        Dbg::info().printf("%X ",mac[i]);
     }
-    printf("\n");
+    Dbg::info().printf("\n");
 }
 
 // physical to virtual address
@@ -142,19 +140,19 @@ void E1000::rxinit()
  
     //ptr = (uint8_t *)(kmalloc_ptr->khmalloc(sizeof(struct e1000_rx_desc)*E1000_NUM_RX_DESC + 16));
     //phy_space<struct e1000_rx_desc*> rx_phy_space;
-    phy_space<uint8_t*>::dmalloc(sizeof(struct e1000_rx_desc)*E1000_NUM_RX_DESC + 16, &rx_phys);
+    phy_space<uint8_t*>::dmalloc(_dma, sizeof(struct e1000_rx_desc)*E1000_NUM_RX_DESC + 16, &rx_phys);
 
-    printf("paddr: %llX vaddr: %lX\n", rx_phys.paddr, (uint64_t)rx_phys.rm.get());
+    Dbg::trace().printf("paddr: %llX vaddr: %lX\n", rx_phys.paddr, (uint64_t)rx_phys.rm.get());
 
     descs = (struct e1000_rx_desc *)rx_phys.rm.get();
-    //printf("descs pointer: %p\n", (void*)descs);
+    //Dbg::trace().printf("descs pointer: %p\n", (void*)descs);
     for(int i = 0; i < E1000_NUM_RX_DESC; i++)
     {
         rx_descs[i] = (struct e1000_rx_desc *)((uint8_t *)descs + i*16);
-        //printf("descs pointer: %p\n", (void*)rx_descs[i]);
+        //Dbg::trace().printf("descs pointer: %p\n", (void*)rx_descs[i]);
 
-        phy_space<uint8_t*>::dmalloc(8192 + 16, &rx_data_phys[i]);
-        //printf("paddr: %llX vaddr: %lX\n", rx_data_phys[i].paddr, (uint64_t)rx_data_phys[i].rm.get());
+        phy_space<uint8_t*>::dmalloc(_dma, 8192 + 16, &rx_data_phys[i]);
+        //Dbg::trace().printf("paddr: %llX vaddr: %lX\n", rx_data_phys[i].paddr, (uint64_t)rx_data_phys[i].rm.get());
 
         rx_descs[i]->addr = (uint64_t)rx_data_phys[i].paddr;
         rx_descs[i]->status = 0;
@@ -180,14 +178,14 @@ void E1000::txinit()
     // Allocate buffer for receive descriptors. For simplicity, in my case khmalloc returns a virtual address that is identical to it physical mapped address.
     // In your case you should handle virtual and physical addresses as the addresses passed to the NIC should be physical ones
     //ptr = (uint8_t *)(kmalloc_ptr->khmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC + 16));
-    phy_space<uint8_t*>::dmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC /*+ 16*/, &tx_phys);
+    phy_space<uint8_t*>::dmalloc(_dma, sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC /*+ 16*/, &tx_phys);
 
-    printf("paddr: %llX vaddr: %lX\n", tx_phys.paddr, (uint64_t)tx_phys.rm.get());
+    Dbg::trace().printf("paddr: %llX vaddr: %lX\n", tx_phys.paddr, (uint64_t)tx_phys.rm.get());
     descs = (struct e1000_tx_desc *)tx_phys.rm.get();
     for(int i = 0; i < E1000_NUM_TX_DESC; i++)
     {
         tx_descs[i] = (struct e1000_tx_desc *)((uint8_t*)descs + i*16);
-        //printf("td_descs[i] %lX\n", (uint64_t)tx_descs[i]);
+        //Dbg::trace().printf("td_descs[i] %lX\n", (uint64_t)tx_descs[i]);
         tx_descs[i]->addr = 0;
         tx_descs[i]->cmd = 0;
         tx_descs[i]->status = TSTA_DD;
@@ -211,7 +209,7 @@ void E1000::txinit()
         | (64 << TCTL_COLD_SHIFT)
         | TCTL_RTLC);
 
-#if 1
+#if 0
     writeCommand(REG_TIPG, 10 << REG_IGPT_SHIFT | 
         10 << REG_IGPR1_SHIFT |
 	    10 << REG_IGPR2_SHIFT);
@@ -253,17 +251,18 @@ void E1000::enableInterrupt()
 }
 
 void E1000::handle_irq() {
-    printf("irq rcvd ...\n");
+    Dbg::trace().printf("irq rcvd ...\n");
     fire();
     if (!_irq_trigger_type)
+    {
         _irq->unmask();
-        //obj_cap()->unmask();
+    }
 }
 
 
 void E1000::startLink()
 {
-    printf("Starting link...\n");
+    Dbg::info().printf("Starting link...\n");
 
     // Read the Device Control Register (CTRL)
     uint32_t ctrl = readCommand(REG_CTRL);
@@ -280,7 +279,7 @@ void E1000::startLink()
         uint32_t status = readCommand(REG_STATUS);
         if (status & STATUS_LU)
         {
-            printf("Link is up!\n");
+            Dbg::info().printf("Link is up!\n");
             return;
         }
         
@@ -288,7 +287,7 @@ void E1000::startLink()
         l4_sleep(10);
     }
 
-    printf("Warning: Link did not come up!\n");
+    Dbg::warn().printf("Warning: Link did not come up!\n");
 }
 
 void E1000::register_interrupt_handler(L4::Cap<L4::Icu> icu,
@@ -301,7 +300,7 @@ void E1000::register_interrupt_handler(L4::Cap<L4::Icu> icu,
     int irq = L4Re::chksys(_dev.irq_enable(&_irq_trigger_type, &polarity),
                             "Enabling interrupt.");
 
-    printf("Device: interrupt : %d trigger: %d, polarity: %d\n",
+    Dbg::info().printf("Device: interrupt : %d trigger: %d, polarity: %d\n",
                         irq, (int)_irq_trigger_type, (int)polarity);
 
     if (_irq_trigger_type == 0)
@@ -310,14 +309,14 @@ void E1000::register_interrupt_handler(L4::Cap<L4::Icu> icu,
         irq_mode = L4_IRQ_F_EDGE;
     L4Re::chksys(icu->set_mode(irq, irq_mode), "Set IRQ mode.");                        
 
-    printf("Registering server with registry....\n");
+    Dbg::info().printf("Registering server with registry....\n");
     _irq = L4Re::chkcap(registry->register_irq_obj(this),
                             "Registering IRQ server object.");
 
-    printf("Binding interrupt %d...\n", irq);
-    int ret = L4Re::chksys(l4_error(icu->bind(irq, _irq)), "Binding interrupt to ICU.");
+                            Dbg::info().printf("Binding interrupt %d...\n", irq);
+    L4Re::chksys(l4_error(icu->bind(irq, _irq)), "Binding interrupt to ICU.");
 
-    printf("Unmasking interrupt...\n");
+    Dbg::info().printf("Unmasking interrupt...\n");
     L4Re::chksys(l4_ipc_error(_irq->unmask(), l4_utcb()),
                  "Unmasking interrupt");
 }
@@ -334,14 +333,12 @@ bool E1000::start()
         writeCommand(REG_MTA0 + i*4, 0);
     }
 
-    printf("RX init...\n");
+    Dbg::trace().printf("RX init...\n");
     enableInterrupt();
-    //writeCommand(REG_IMC, 0xffffffff); //to remove
-    //writeCommand(REG_IMASK, (1 << 0)); //to remove
     rxinit();
-    printf("TX init...\n");
+    Dbg::trace().printf("TX init...\n");
     txinit();        
-    printf("E1000 card started\n");
+    Dbg::trace().printf("E1000 card started\n");
     return true;
 }
 
@@ -353,7 +350,7 @@ void E1000::fire()
 
     uint32_t status = readCommand(REG_ICR);
     writeCommand(REG_ICR, status); 
-    printf("fire status: %u\n", status);
+    Dbg::trace().printf("fire status: %u\n", status);
     if (status & 0x04)
     {
         startLink();
@@ -371,11 +368,11 @@ void E1000::fire()
 void E1000::handleReceive()
 {
     uint16_t old_cur;
-    bool got_packet = false;
+    //bool got_packet = false;
 
     while ((rx_descs[rx_cur]->status & 0x1))
     {
-        got_packet = true;
+        //got_packet = true;
         //uint8_t *buf = (uint8_t *)rx_descs[rx_cur]->addr;
         uint8_t *buf = rxP2VAddress(rx_descs[rx_cur]->addr);
         uint16_t len = rx_descs[rx_cur]->length;
@@ -383,7 +380,7 @@ void E1000::handleReceive()
         // Here you should inject the received packet into your network stack
         if (buf != NULL) 
         {
-            printf("rxp <%u>: ", len);
+            Dbg::trace().printf("rxp <%u>: ", len);
             for (int i=0; i < len; i++) {
                 printf("%02X", buf[i]);
             }
@@ -411,14 +408,14 @@ int E1000::sendPacket(const void * p_data, uint16_t p_len)
 
     writeCommand(REG_TXDESCTAIL, tx_cur);  
     /*
-    printf("TCTL: %x\n", readCommand(REG_TCTRL));
-    printf("ICR: %X\n", readCommand(REG_ICR));
-    printf("TDT: %x\n", readCommand(REG_TXDESCTAIL));
-    printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
-    printf("TDLEN: %x\n", readCommand(REG_TXDESCLEN));
-    printf("TDBAH: %x\n", readCommand(REG_TXDESCHI));
-    printf("TDBAL: %x\n", readCommand(REG_TXDESCLO));
-    printf("IMS: %x\n", readCommand(REG_IMASK));*/
+    Dbg::trace().printf("TCTL: %x\n", readCommand(REG_TCTRL));
+    Dbg::trace().printf("ICR: %X\n", readCommand(REG_ICR));
+    Dbg::trace().printf("TDT: %x\n", readCommand(REG_TXDESCTAIL));
+    Dbg::trace().printf("TDH: %x\n", readCommand(REG_TXDESCHEAD));
+    Dbg::trace().printf("TDLEN: %x\n", readCommand(REG_TXDESCLEN));
+    Dbg::trace().printf("TDBAH: %x\n", readCommand(REG_TXDESCHI));
+    Dbg::trace().printf("TDBAL: %x\n", readCommand(REG_TXDESCLO));
+    Dbg::trace().printf("IMS: %x\n", readCommand(REG_IMASK));*/
 
     while(!(tx_descs[old_cur]->status & 0xff));
  
