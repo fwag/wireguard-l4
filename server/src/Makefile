@@ -1,7 +1,7 @@
 PKGDIR ?= ../..
 L4DIR  ?= $(PKGDIR)/../..
 
-TARGET  = e1000-drv
+TARGET  = wgl4
 SRC_CC  = main.cc \
 	  e1000.cc \
 	  mmio.cc
