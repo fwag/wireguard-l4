@@ -80,7 +80,7 @@ uint32_t E1000::eepromRead( uint8_t addr)
 	return data;
 }
 
-bool E1000::readMACAddress()
+bool E1000::readMacAddress()
 {
     if ( eeprom_exists)
     {
@@ -111,13 +111,15 @@ bool E1000::readMACAddress()
     return true;
 }
 
-void E1000::printMACAddress() 
+void E1000::printMacAddress() 
 {
-    Dbg::info().printf("MAC: ");
-    for (int i=0; i <= 5; i++) {
-        Dbg::info().printf("%X ",mac[i]);
-    }
-    Dbg::info().printf("\n");
+    Dbg::info().printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+        mac[0], mac[1],mac[2],mac[3], mac[4],mac[5]);
+}
+
+uint8_t* E1000::getMacAddress() 
+{
+    return mac;
 }
 
 // physical to virtual address
@@ -142,7 +144,7 @@ void E1000::rxinit()
     //phy_space<struct e1000_rx_desc*> rx_phy_space;
     phy_space<uint8_t*>::dmalloc(_dma, sizeof(struct e1000_rx_desc)*E1000_NUM_RX_DESC + 16, &rx_phys);
 
-    Dbg::trace().printf("paddr: %llX vaddr: %lX\n", rx_phys.paddr, (uint64_t)rx_phys.rm.get());
+    Dbg::trace().printf("paddr: %llX vaddr: %llX\n", rx_phys.paddr, (uint64_t)rx_phys.rm.get());
 
     descs = (struct e1000_rx_desc *)rx_phys.rm.get();
     //Dbg::trace().printf("descs pointer: %p\n", (void*)descs);
@@ -180,7 +182,7 @@ void E1000::txinit()
     //ptr = (uint8_t *)(kmalloc_ptr->khmalloc(sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC + 16));
     phy_space<uint8_t*>::dmalloc(_dma, sizeof(struct e1000_tx_desc)*E1000_NUM_TX_DESC /*+ 16*/, &tx_phys);
 
-    Dbg::trace().printf("paddr: %llX vaddr: %lX\n", tx_phys.paddr, (uint64_t)tx_phys.rm.get());
+    Dbg::trace().printf("paddr: %llX vaddr: %llX\n", tx_phys.paddr, (uint64_t)tx_phys.rm.get());
     descs = (struct e1000_tx_desc *)tx_phys.rm.get();
     for(int i = 0; i < E1000_NUM_TX_DESC; i++)
     {
@@ -324,8 +326,8 @@ void E1000::register_interrupt_handler(L4::Cap<L4::Icu> icu,
 bool E1000::start()
 {
     detectEEProm ();
-    if (! readMACAddress()) return false;
-    printMACAddress();
+    if (! readMacAddress()) return false;
+    printMacAddress();
     startLink();
     
     for(int i = 0; i < 0x80; i++)

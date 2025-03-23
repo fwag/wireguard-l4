@@ -203,11 +203,12 @@ class E1000 : public L4::Irqep_t<E1000>
 public:
         bool detectEEProm(); // Return true if EEProm exist, else it returns false and set the eerprom_existsdata member
         uint32_t eepromRead( uint8_t addr); // Read 4 bytes from a specific EEProm Address
-        bool readMACAddress();       // Read MAC Address
+        bool readMacAddress();       // Read MAC Address
+        uint8_t* getMacAddress();    // Returns the MAC address
+        void printMacAddress();
         void rxinit();               // Initialize receive descriptors an buffers
         void txinit();               // Initialize transmit descriptors an buffers
         void enableInterrupt();      // Enable Interrupts
-        void printMACAddress();
         void startLink();           // Start up the network
         bool start();               // perform initialization tasks and starts the driver
         void register_interrupt_handler(L4::Cap<L4::Icu> icu, L4Re::Util::Object_registry *registry);
@@ -218,7 +219,6 @@ public:
 
         E1000(L4vbus::Pci_dev dev, L4Re::Util::Shared_cap<L4Re::Dma_space> dma, L4drivers::Register_block<32> regs);
 #if 0
-        uint8_t * getMacAddress ();                         // Returns the MAC address
         ~E1000();                                             // Default Destructor
 #endif
 };

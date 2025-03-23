@@ -149,12 +149,144 @@ setup_hardware()
   device_discovery(vbus, icu);
 }
 
+#include<random>
+#include <ctime>
+#include <l4/rtc/rtc>
+
+#include <lwip/err.h>
+#include <lwip/etharp.h>
+#include <lwip/ethip6.h>
+#include <lwip/netif.h>
+#include <lwip/netifapi.h>
+
+static err_t _output(struct netif *n, struct pbuf *p)
+{
+  // This should be only called from the lwIP core (with the lock held)
+  //LWIP_ASSERT_CORE_LOCKED();
+
+  while (p) {
+    phy_space<uint8_t*> packet;
+    phy_space<uint8_t*>::dmalloc(dma, p->len, &packet);
+    uint8_t* vaddr = (uint8_t*)packet.rm.get();
+    memcpy(vaddr, p->payload, p->len);
+    const uint8_t* paddr = (uint8_t*)packet.paddr;
+    //Dbg::trace().printf("packet paddr: %llX %p\n", packet.paddr, paddr);
+    e1000drv->sendPacket((const void*)paddr, p->len);
+
+    p = p->next;  // Handle chained pbufs 
+  }
+  return ERR_OK;
+}
+
+static err_t _init_netif(struct netif *netif)
+{
+  netif->name[0] = 'e';
+  netif->name[1] = '0';
+  netif->output = etharp_output; 
+  netif->linkoutput = _output;
+  netif->mtu = 1500;
+
+  memcpy(netif->hwaddr, e1000drv->getMacAddress(), ETH_HWADDR_LEN);
+  netif->hwaddr_len = ETH_HWADDR_LEN;
+
+  netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP |
+                NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;
+
+
+  // Use as default for outgoing routes if this is the first network interface
+  if (!netif_default)
+    netif_set_default(netif);
+
+  return ERR_OK;  
+}
+
+/*err_t
+tcpip2_input(struct pbuf *p, struct netif *inp)
+{
+
+}*/
+
 int main (void)
 {
   Dbg::set_level(Dbg::Level::Warn | Dbg::Level::Info | Dbg::Level::Trace);
   Dbg::info().printf("e1000-driver...\n");
 
   setup_hardware();
+  
+  /////////////////////
+  tcpip_init(NULL, NULL);
+
+  struct netif netif;
+  //const ip4_addr_t ipaddr = { LWIP_MAKEU32(192, 168, 40, 10) };
+  //const ip4_addr_t netmask = { LWIP_MAKEU32(255, 255, 255, 0) };
+  //const ip4_addr_t gateway = { LWIP_MAKEU32(192, 168, 40, 1) };
+  ip4_addr_t ipaddr;
+  ip4_addr_t netmask;
+  ip4_addr_t gateway;
+
+  IP4_ADDR(&ipaddr, 192, 168, 40, 10);
+  IP4_ADDR(&netmask, 255, 255, 255, 0);
+  IP4_ADDR(&gateway, 192, 168, 40, 100);
+
+  // Register network interface
+  if (netifapi_netif_add(&netif,
+                         &ipaddr, &netmask, &gateway, 
+                          NULL, _init_netif, tcpip_input))
+        throw L4::Runtime_error(-L4_ENODEV, "Failed to initialize network interface");
+
+  LOCK_TCPIP_CORE();
+
+  netif_set_link_up(&netif);
+#if 1
+  ip4_addr_t dest_ip;
+  IP4_ADDR(&dest_ip, 192,168,40,100);
+  
+  uint8_t data[] = {0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33};
+  int data_len = sizeof(data);
+  struct pbuf *p = pbuf_alloc(PBUF_IP, data_len, PBUF_RAM);
+  memcpy(p->payload, data, data_len);
+  //ip_output(p, &netif.ip_addr, &dest_ip, 0, 0, IP_PROTO_UDP);
+  while(1) {
+    ip4_output(p, &ipaddr, &dest_ip, 0, 0, IP_PROTO_UDP);
+    l4_sleep(5000);
+  }
+  pbuf_free(p);
+#endif
+  /////////////////////
+
+#if 0
+/////////////
+  //std::mt19937_64 mt64(static_cast<unsigned int>(time(nullptr)));
+  //unsigned long long random_value = mt64();
+  // printf("64-bit random value: %llu\n", random_value);
+  L4rtc::Rtc::Time offset;
+  int ret;
+  L4::Cap<L4rtc::Rtc> rtc = L4Re::Env::env()->get_cap<L4rtc::Rtc>("rtc");
+  if (!rtc) {
+    printf("no rtc\n");
+    return -1;
+  }
+  printf("yes rtc\n");
+  ret = rtc->get_timer_offset(&offset);
+
+  // error, assume offset 0
+  if (ret)
+    printf("RTC server not found, assuming 1.1.1970, 0:00 ...\n");;
+
+  std::random_device rd;
+  std::mt19937 mt(rd());
+  unsigned int random_value;
+  
+  while (1)
+  {
+
+    random_value = mt();
+    printf("Random value: %u - %ld time %u\n", random_value,  time(NULL), (uint32_t)(l4_kip_clock(l4re_kip())/1000000));  
+
+    l4_sleep(200);
+  }
+//////////////
+#endif 
 
   server.loop();
 
