@@ -158,53 +158,147 @@ setup_hardware()
 #include <lwip/ethip6.h>
 #include <lwip/netif.h>
 #include <lwip/netifapi.h>
+#include <pthread.h>
+#include <pthread-l4.h>
 
-static err_t _output(struct netif *n, struct pbuf *p)
-{
-  // This should be only called from the lwIP core (with the lock held)
-  //LWIP_ASSERT_CORE_LOCKED();
+  static err_t _output(struct netif *n, struct pbuf *p)
+  {
+    // This should be only called from the lwIP core (with the lock held)
+    //LWIP_ASSERT_CORE_LOCKED();
+    Dbg::trace().printf("_output %p\n", p);
 
-  while (p) {
-    phy_space<uint8_t*> packet;
-    phy_space<uint8_t*>::dmalloc(dma, p->len, &packet);
-    uint8_t* vaddr = (uint8_t*)packet.rm.get();
-    memcpy(vaddr, p->payload, p->len);
-    const uint8_t* paddr = (uint8_t*)packet.paddr;
-    //Dbg::trace().printf("packet paddr: %llX %p\n", packet.paddr, paddr);
-    e1000drv->sendPacket((const void*)paddr, p->len);
+    while (p) {
 
-    p = p->next;  // Handle chained pbufs 
+      phy_space<uint8_t*> packet;
+      phy_space<uint8_t*>::dmalloc(dma, p->len, &packet);
+      uint8_t* vaddr = (uint8_t*)packet.rm.get();
+      memcpy(vaddr, p->payload, p->len);
+      const uint8_t* paddr = (uint8_t*)packet.paddr;
+      Dbg::trace().printf("_output packet paddr: %llX %p\n", packet.paddr, paddr);
+      e1000drv->sendPacket((const void*)paddr, p->len);
+      phy_space<uint8_t*>::dmfree(dma, p->len, &packet);
+      //LOCK_TCPIP_CORE();
+      p = p->next;  // Handle chained pbufs
+      //UNLOCK_TCPIP_CORE();
+ 
+    }
+
+    return ERR_OK;
   }
-  return ERR_OK;
-}
 
-static err_t _init_netif(struct netif *netif)
-{
-  netif->name[0] = 'e';
-  netif->name[1] = '0';
-  netif->output = etharp_output; 
-  netif->linkoutput = _output;
-  netif->mtu = 1500;
+  static err_t _init_netif(struct netif *netif)
+  {
+    netif->name[0] = 'e';
+    netif->name[1] = '0';
+    netif->output = etharp_output; 
+    netif->linkoutput = _output;
+    netif->mtu = 1500;
 
-  memcpy(netif->hwaddr, e1000drv->getMacAddress(), ETH_HWADDR_LEN);
-  netif->hwaddr_len = ETH_HWADDR_LEN;
+    memcpy(netif->hwaddr, e1000drv->getMacAddress(), ETH_HWADDR_LEN);
+    printf("_init_netif %02X:%02X:%02X:%02X:%02X:%02X\n", 
+      netif->hwaddr[0],netif->hwaddr[1],netif->hwaddr[2],
+      netif->hwaddr[3],netif->hwaddr[4],netif->hwaddr[5]);
+    netif->hwaddr_len = ETH_HWADDR_LEN;
 
-  netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP |
-                NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;
+    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP |
+                  NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;
 
 
-  // Use as default for outgoing routes if this is the first network interface
-  if (!netif_default)
-    netif_set_default(netif);
+    // Use as default for outgoing routes if this is the first network interface
+    if (!netif_default)
+      netif_set_default(netif);
 
-  return ERR_OK;  
-}
+    return ERR_OK;  
+  }
 
-/*err_t
-tcpip2_input(struct pbuf *p, struct netif *inp)
-{
+  static void* _input_loop (void *arg)
+  {
+    while (true)
+    {   
+      ip4_addr_t ipaddr; 
+      IP4_ADDR(&ipaddr, 192, 168, 40, 10);    
+      ip4_addr_t dest_ip;
+      IP4_ADDR(&dest_ip, 192,168,40,100);
+      
+      uint8_t data[] = {0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
+        0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
+        0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
+        0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
+        0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
+        0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
+        0xde, 0xad};
+      int data_len = sizeof(data);
 
-}*/
+      //ip_output(p, &netif.ip_addr, &dest_ip, 0, 0, IP_PROTO_UDP);
+      //LOCK_TCPIP_CORE();
+
+      const ip4_addr_t *resolved_ip = NULL;
+      struct eth_addr *resolved_mac = NULL;
+
+      while(1) {
+        printf("sending ...\n");
+        //sys_check_timeouts();
+        struct pbuf *p = pbuf_alloc(PBUF_IP, data_len, PBUF_RAM);
+        memcpy(p->payload, data, data_len);
+        LOCK_TCPIP_CORE();
+        ip4_output(p, &ipaddr, &dest_ip, 0, 0, IP_PROTO_UDP);
+        UNLOCK_TCPIP_CORE();
+        pbuf_free(p);
+
+        
+        // Query the ARP table for the MAC address
+        #if 0
+        int i;
+        for (i = 0; i < ARP_TABLE_SIZE; i++) {
+          ip4_addr_t *ip;
+          struct netif *netif;
+          struct eth_addr *ethaddr;
+      
+          if (etharp_get_entry(i, &ip, &netif, &ethaddr)) {
+            if (ip4_addr_eq(&dest_ip, ip)) {
+              /* fill in object properties */
+              printf("MAC address found for IP %s\n",  ip4addr_ntoa(resolved_ip));
+            }
+          }
+        }
+        #endif
+        /*ssize_t index = etharp_find_addr(&netif, &dest_ip, &resolved_mac, &resolved_ip);
+
+        if (index >= 0 && resolved_mac != NULL) {
+            printf("MAC address found for IP %s: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  ip4addr_ntoa(resolved_ip),
+                  resolved_mac->addr[0], resolved_mac->addr[1], resolved_mac->addr[2],
+                  resolved_mac->addr[3], resolved_mac->addr[4], resolved_mac->addr[5]);
+        } else {
+            printf("MAC address NOT resolved for IP: %s\n", ip4addr_ntoa(&dest_ip));
+        }*/
+        l4_sleep(5000);
+      }
+    }
+  }
+
+  static struct netif netif;
+  //cxx::unique_ptr<pbuf_custom> rx_pbufs;
+
+  void ethernet_rx_handler (uint8_t* buf, uint16_t len)
+  {
+    printf("ethernet_rx_handler len %u\n", len);
+    struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
+    if (p == NULL) {
+      printf("ethernet_rx_handler p=NULL\n");
+
+      return; // Memory error
+    }
+    memcpy(p->payload, buf, len);
+    printf("ethernet_rx_handler before netif.input %u\n", len);
+    if (netif.input(p, &netif) != ERR_OK)
+     {
+        printf("ethernet_rx_handler != ERR_OK %u\n", len);
+        pbuf_free(p);
+    }
+
+    printf("ethernet_rx_handler end\n");
+  }
 
 int main (void)
 {
@@ -214,12 +308,13 @@ int main (void)
   setup_hardware();
   
   /////////////////////
+#if 1
+  //rx_pbufs = cxx::make_unique<pbuf_custom[]>(16);
+
   tcpip_init(NULL, NULL);
 
-  struct netif netif;
-  //const ip4_addr_t ipaddr = { LWIP_MAKEU32(192, 168, 40, 10) };
-  //const ip4_addr_t netmask = { LWIP_MAKEU32(255, 255, 255, 0) };
-  //const ip4_addr_t gateway = { LWIP_MAKEU32(192, 168, 40, 1) };
+  pthread_t input_thread;
+
   ip4_addr_t ipaddr;
   ip4_addr_t netmask;
   ip4_addr_t gateway;
@@ -234,11 +329,16 @@ int main (void)
                           NULL, _init_netif, tcpip_input))
         throw L4::Runtime_error(-L4_ENODEV, "Failed to initialize network interface");
 
-  LOCK_TCPIP_CORE();
+  e1000drv->register_rx_callback(ethernet_rx_handler);  
 
+  LOCK_TCPIP_CORE();
   netif_set_link_up(&netif);
-#if 1
-  ip4_addr_t dest_ip;
+  UNLOCK_TCPIP_CORE();
+
+  if (pthread_create(&input_thread, nullptr, _input_loop, NULL))
+    throw L4::Runtime_error(-L4_ENODEV, "Failed to start input thread");  
+
+  /*ip4_addr_t dest_ip;
   IP4_ADDR(&dest_ip, 192,168,40,100);
   
   uint8_t data[] = {0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33};
@@ -246,11 +346,11 @@ int main (void)
   struct pbuf *p = pbuf_alloc(PBUF_IP, data_len, PBUF_RAM);
   memcpy(p->payload, data, data_len);
   //ip_output(p, &netif.ip_addr, &dest_ip, 0, 0, IP_PROTO_UDP);
-  while(1) {
+  //while(1) {
     ip4_output(p, &ipaddr, &dest_ip, 0, 0, IP_PROTO_UDP);
-    l4_sleep(5000);
-  }
-  pbuf_free(p);
+  //  l4_sleep(5000);
+  //}
+  pbuf_free(p);*/
 #endif
   /////////////////////
 
@@ -260,6 +360,7 @@ int main (void)
   //unsigned long long random_value = mt64();
   // printf("64-bit random value: %llu\n", random_value);
   L4rtc::Rtc::Time offset;
+  //l4_uint64_t offset;
   int ret;
   L4::Cap<L4rtc::Rtc> rtc = L4Re::Env::env()->get_cap<L4rtc::Rtc>("rtc");
   if (!rtc) {
@@ -271,7 +372,9 @@ int main (void)
 
   // error, assume offset 0
   if (ret)
-    printf("RTC server not found, assuming 1.1.1970, 0:00 ...\n");;
+    printf("RTC server not found, assuming 1.1.1970, 0:00 ...\n");
+
+  printf("offset %u\n", offset+l4_kip_clock_ns(l4re_kip()));
 
   std::random_device rd;
   std::mt19937 mt(rd());

@@ -35,7 +35,19 @@ struct phy_space {
                              &phys->paddr));    
                 if (memsz > ds_size)
                         throw(L4::Out_of_memory("not really"));   
-        }        
+        } 
+        
+        static void dmfree(L4Re::Util::Shared_cap<L4Re::Dma_space> dma, unsigned memsz, struct phy_space<T> *phys) {
+                auto *e = L4Re::Env::env();
+                L4::Cap<L4Re::Dataspace> ds;
+
+                L4Re::chksys(e->rm()->detach((l4_addr_t)phys->rm.get(), &ds),
+                        "Attach memory to virtual memory.");
+
+                L4Re::chksys(dma->unmap(phys->paddr, 
+                        memsz, L4Re::Dma_space::Attributes::None, L4Re::Dma_space::Bidirectional));
+        }
+
            
 };
 

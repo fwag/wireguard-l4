@@ -367,6 +367,11 @@ void E1000::fire()
     }
 }
 
+void E1000::register_rx_callback(rx_callback_t callback)
+{
+    _rx_callback = callback;
+}
+
 void E1000::handleReceive()
 {
     uint16_t old_cur;
@@ -382,6 +387,10 @@ void E1000::handleReceive()
         // Here you should inject the received packet into your network stack
         if (buf != NULL) 
         {
+            if (_rx_callback) {
+                _rx_callback(buf, len);
+            }
+
             Dbg::trace().printf("rxp <%u>: ", len);
             for (int i=0; i < len; i++) {
                 printf("%02X", buf[i]);

@@ -169,6 +169,9 @@ struct e1000_tx_desc {
         volatile uint16_t special;
 } __attribute__((packed));
 
+//using RxCallback = std::function<void(uint8_t*, uint16_t)>;
+typedef void (*rx_callback_t)(uint8_t*, uint16_t);
+
 class E1000 : public L4::Irqep_t<E1000>
 {
     private:
@@ -192,7 +195,7 @@ class E1000 : public L4::Irqep_t<E1000>
 
         L4::Cap<L4::Irq> _irq;        ///< interrupt capability
         unsigned char _irq_trigger_type;
-        
+        rx_callback_t _rx_callback;
         
         // Send Commands and read results From NICs either using MMIO or IO Ports
         void writeCommand( uint16_t p_address, uint32_t p_value);
@@ -216,6 +219,8 @@ public:
         void handleReceive();        // Handle a packet reception.        
         void fire();    // This method should be called by the interrupt handler 
         int sendPacket(const void * p_data, uint16_t p_len);  // Send a packet
+        // Register the receive callback
+        void register_rx_callback(rx_callback_t callback); 
 
         E1000(L4vbus::Pci_dev dev, L4Re::Util::Shared_cap<L4Re::Dma_space> dma, L4drivers::Register_block<32> regs);
 #if 0
