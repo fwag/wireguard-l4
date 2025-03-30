@@ -253,7 +253,7 @@ int main (void)
 
   /*pthread_t input_thread;
   if (pthread_create(&input_thread, nullptr, _input_loop, NULL))
-    throw L4::Runtime_error(-L4_ENODEV, "Failed to start input thread");*/                                                                                
+    throw L4::Runtime_error(-L4_ENODEV, "Failed to start input thread");*/                                                                          
 
   server.loop();
 

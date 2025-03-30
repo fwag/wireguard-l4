@@ -80,7 +80,6 @@ void LWIPConf::start()
 
     struct wireguardif_init_data wg;
     struct wireguardif_peer peer;
-    //memset((void*)&peer, 0, sizeof(struct wireguardif_peer));
   
     ip4_addr_t ipaddr, wg_ipaddr;
     ip4_addr_t netmask, wg_netmask;
@@ -104,7 +103,7 @@ void LWIPConf::start()
     LOCK_TCPIP_CORE();
     if (!(wg_netif = netif_add(&wg_netif_struct,
         &wg_ipaddr, &wg_netmask, &wg_gateway,
-        &wg, &wireguardif_init,  &ip_input))) 
+        &wg, &wireguardif_init,  &tcpip_input))) 
         throw L4::Runtime_error(-L4_ENODEV, "Failed to initialize network interface");
     UNLOCK_TCPIP_CORE();
 
@@ -115,17 +114,19 @@ void LWIPConf::start()
                            NULL, init_netif,  tcpip_input))
         throw L4::Runtime_error(-L4_ENODEV, "Failed to initialize network interface");
 
+    e1000drv->register_rx_callback(ethernet_rx_handler);
+
     // Mark the interface as administratively up, link up flag is set automatically when peer connects
     LOCK_TCPIP_CORE();
     printf("netif_set_link_up...\n");
     netif_set_link_up(&netif);
     netif_set_link_up(wg_netif);
     UNLOCK_TCPIP_CORE();
-  
+
     printf("wireguardif_peer_init...\n");
     // Initialise the first WireGuard peer structure
     wireguardif_peer_init(&peer);
-    peer.public_key = "cDfetaDFWnbxts2Pbz4vFYreikPEEVhTlV/sniIEBjo=";
+    peer.public_key = "SeCExlmu6uL75WC/dzEJA/l3uBUY4EMIbB4jDFctPQg=";
     peer.preshared_key = NULL;
     // Allow all IPs through tunnel
     peer.allowed_ip = IPADDR4_INIT_BYTES(0, 0, 0, 0);
@@ -144,7 +145,7 @@ void LWIPConf::start()
       wireguardif_connect(wg_netif, wg_peer_index);
     } 
 
-#if 0
+    #if 0
     ip4_addr_t ipaddr;
     ip4_addr_t netmask;
     ip4_addr_t gateway;
