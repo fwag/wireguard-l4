@@ -17,7 +17,7 @@ SRC_CC  = main.cc \
 	wireguard-lwip/src/crypto/refc/x25519.cc \
 
 
-REQUIRES_LIBS  := libio lwip libio-vbus cxx_libc_io cxx_io libstdc++
+REQUIRES_LIBS  := libio lwip libio-vbus cxx_libc_io cxx_io libstdc++ lwip_virtio_net
 
 include $(L4DIR)/mk/prog.mk
 

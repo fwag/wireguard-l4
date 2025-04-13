@@ -253,7 +253,7 @@ void E1000::enableInterrupt()
 }
 
 void E1000::handle_irq() {
-    Dbg::trace().printf("irq rcvd ...\n");
+    //Dbg::trace().printf("irq rcvd ...\n");
     fire();
     if (!_irq_trigger_type)
     {
@@ -352,7 +352,7 @@ void E1000::fire()
 
     uint32_t status = readCommand(REG_ICR);
     writeCommand(REG_ICR, status); 
-    Dbg::trace().printf("fire status: %u\n", status);
+    //Dbg::trace().printf("fire status: %u\n", status);
     if (status & 0x04)
     {
         startLink();
@@ -391,11 +391,11 @@ void E1000::handleReceive()
                 _rx_callback(buf, len);
             }
 
-            Dbg::trace().printf("rxp <%u>: ", len);
-            for (int i=0; i < len; i++) {
-                printf("%02X", buf[i]);
-            }
-            printf("\n");
+            //Dbg::trace().printf("rxp <%u>: ", len);
+            //for (int i=0; i < len; i++) {
+            //    printf("%02X", buf[i]);
+            //}
+            //printf("\n");
         }
 
         rx_descs[rx_cur]->status = 0;

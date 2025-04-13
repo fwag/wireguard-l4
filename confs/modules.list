@@ -59,14 +59,25 @@ default-kernel fiasco -serial_esc
 default-bootstrap bootstrap
 
 entry wgl4
-kernel fiasco -serial_esc
-roottask moe rom/wgl4.cfg
+#kernel fiasco -serial_esc
+#roottask moe rom/wgl4.cfg
+moe wgl4.cfg
 module l4re
 module ned
 module io
 module rtc
 module pci-e1000.io
 module io/x86-legacy.devs
+module uvmm
+module cons
+# bvm
+module[arch=amd64,fname=virt.dtb]  dtb/virt-pc.dtb
+module[arch=amd64,fname=linux,nostrip]    https://l4re.org/download/Linux-kernel/x86-64/bzImage-6.6.8
+module[arch=amd64,fname=ramdisk.cpio.gz]  https://l4re.org/download/ramdisks/ramdisk-amd64.cpio.gz
+# evm
+module l4vio_switch #to remove
+module l4vio_net_p2p
+module[shell] echo $SRC_BASE_ABS/pkg/uvmm/configs/vmm.lua
 module wgl4.cfg
 module wgl4
 

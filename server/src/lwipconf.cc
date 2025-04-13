@@ -8,7 +8,7 @@ err_t LWIPConf::output(struct netif *n, struct pbuf *p)
 
     // This should be only called from the lwIP core (with the lock held)
     // LWIP_ASSERT_CORE_LOCKED();
-    Dbg::trace().printf("_output %p\n", p);
+    //Dbg::trace().printf("_output %p\n", p);
 
     while (p)
     {
@@ -18,7 +18,7 @@ err_t LWIPConf::output(struct netif *n, struct pbuf *p)
         uint8_t *vaddr = (uint8_t *)packet.rm.get();
         memcpy(vaddr, p->payload, p->len);
         const uint8_t *paddr = (uint8_t *)packet.paddr;
-        Dbg::trace().printf("_output packet paddr: %llX %p\n", packet.paddr, paddr);
+        //Dbg::trace().printf("_output packet paddr: %llX %p\n", packet.paddr, paddr);
         e1000drv->sendPacket((const void *)paddr, p->len);
         phy_space<uint8_t *>::dmfree(dma, p->len, &packet);
         p = p->next; // Handle chained pbufs
@@ -53,7 +53,7 @@ err_t LWIPConf::init_netif(struct netif *netif)
 
 void LWIPConf::ethernet_rx_handler(uint8_t *buf, uint16_t len)
 {
-    printf("ethernet_rx_handler len %u\n", len);
+    //printf("ethernet_rx_handler len %u\n", len);
     struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
     if (p == NULL)
     {
@@ -62,14 +62,14 @@ void LWIPConf::ethernet_rx_handler(uint8_t *buf, uint16_t len)
         return; // Memory error
     }
     memcpy(p->payload, buf, len);
-    printf("ethernet_rx_handler before netif.input %u\n", len);
+    //printf("ethernet_rx_handler before netif.input %u\n", len);
     if (netif.input(p, &netif) != ERR_OK)
     {
         printf("ethernet_rx_handler != ERR_OK %u\n", len);
         pbuf_free(p);
     }
 
-    printf("ethernet_rx_handler end\n");
+    //printf("ethernet_rx_handler end\n");
 }
 
 static uint8_t wg_peer_index = WIREGUARDIF_INVALID_INDEX;
