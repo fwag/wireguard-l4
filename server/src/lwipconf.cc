@@ -1,6 +1,7 @@
 #include "lwipconf.h"
 #include <cstring>
 #include <l4/util/util.h>
+#include "lwip_virtio_net.h"
 
 err_t LWIPConf::output(struct netif *n, struct pbuf *p)
 {
@@ -144,6 +145,19 @@ void LWIPConf::start()
       // Start outbound connection to peer
       wireguardif_connect(wg_netif, wg_peer_index);
     } 
+
+#if 0
+    for (auto *i = L4Re::Env::env()->initial_caps(); i && i->flags != ~0UL; ++i)
+    {
+      printf("lwip iname: %s\n", i->name);
+      if (strncmp(i->name, "virtnet", strlen("virtnet")) == 0) 
+      {
+        printf("lwip before new Netdev: %s\n", i->name);
+        new Netdev(L4::Cap<L4virtio::Device>(i->cap));
+        printf("lwip after new Netdev: %s\n", i->name);
+      }
+    }
+#endif 
 
     #if 0
     ip4_addr_t ipaddr;

@@ -1,2 +1,2 @@
-requires: stdlibs lwip libio libio-vbus cxx_libc_io cxx_io libstdc++ lwip_virtio_net
+requires: stdlibs lwip libio libio-vbus cxx_libc_io cxx_io libstdc++
 maintainer: fwag
