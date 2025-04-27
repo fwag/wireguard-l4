@@ -46,8 +46,8 @@ err_t LWIPConf::init_netif(struct netif *netif)
                    NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;
 
     // Use as default for outgoing routes if this is the first network interface
-    if (!netif_default)
-        netif_set_default(netif);
+    /*if (!netif_default)
+        netif_set_default(netif);*/
 
     return ERR_OK;
 }
@@ -103,15 +103,20 @@ void LWIPConf::start()
     //wg_netif = netif_add(&wg_netif_struct, &ipaddr, &netmask, &gateway, &wg, &wireguardif_init, &ip_input);
     LOCK_TCPIP_CORE();
     if (!(wg_netif = netif_add(&wg_netif_struct,
-        &wg_ipaddr, &wg_netmask, &wg_gateway,
+        &wg_ipaddr, &wg_netmask, NULL,//&wg_gateway,
         &wg, &wireguardif_init,  &tcpip_input))) 
         throw L4::Runtime_error(-L4_ENODEV, "Failed to initialize network interface");
+    if (!netif_default) {
+        printf("netif_set_default wg ...\n");
+        netif_set_default(&wg_netif_struct);  
+        wg_netif_struct.flags |= NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;   
+    }
     UNLOCK_TCPIP_CORE();
 
     printf("netifapi_netif_add...\n");
 
     if (netifapi_netif_add(&netif,
-                           &ipaddr, &netmask, &gateway,
+                           &ipaddr, &netmask, NULL,//&gateway,
                            NULL, init_netif,  tcpip_input))
         throw L4::Runtime_error(-L4_ENODEV, "Failed to initialize network interface");
 
@@ -146,7 +151,6 @@ void LWIPConf::start()
       wireguardif_connect(wg_netif, wg_peer_index);
     } 
 
-#if 0
     for (auto *i = L4Re::Env::env()->initial_caps(); i && i->flags != ~0UL; ++i)
     {
       printf("lwip iname: %s\n", i->name);
@@ -157,7 +161,6 @@ void LWIPConf::start()
         printf("lwip after new Netdev: %s\n", i->name);
       }
     }
-#endif 
 
     #if 0
     ip4_addr_t ipaddr;

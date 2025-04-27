@@ -160,6 +160,9 @@ setup_hardware()
 #include <ctime>
 #include <l4/rtc/rtc>
 
+#include "lwip/icmp.h"
+#include "lwip/inet_chksum.h"
+
 static void* _input_loop (void *arg)
 {
   (void)(arg);
@@ -167,25 +170,50 @@ static void* _input_loop (void *arg)
   while (true)
   {   
     ip4_addr_t ipaddr; 
-    IP4_ADDR(&ipaddr, 192, 168, 40, 10);    
+    IP4_ADDR(&ipaddr, 192, 168, 30, 10);    
     ip4_addr_t dest_ip;
-    IP4_ADDR(&dest_ip, 192,168,40,100);
+    IP4_ADDR(&dest_ip, 192,168, 30, 100);
     
-    uint8_t data[] = {0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
+    /*uint8_t data[] = {0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
       0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
       0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
       0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
       0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33,
       0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
       0xde, 0xad};
-    int data_len = sizeof(data);
+    int data_len = sizeof(data);*/
+
+    #define ICMP_PAYLOAD_LEN 32 // your custom payload size
+    uint8_t icmp_packet[8 + ICMP_PAYLOAD_LEN]; // 8 bytes header + payload
+    
+    // Fill in ICMP header
+    icmp_packet[0] = ICMP_ECHO;   // Type = 8 (Echo Request)
+    icmp_packet[1] = 0;           // Code = 0
+    icmp_packet[2] = 0;           // Checksum placeholder
+    icmp_packet[3] = 0;           // Checksum placeholder
+    icmp_packet[4] = 0x34;        // Identifier (high byte)
+    icmp_packet[5] = 0x12;        // Identifier (low byte)
+    icmp_packet[6] = 0x01;        // Sequence number (high byte)
+    icmp_packet[7] = 0x00;        // Sequence number (low byte)
+    
+    // Fill payload with something (optional)
+    for (int i = 0; i < ICMP_PAYLOAD_LEN; i++) {
+        icmp_packet[8 + i] = (uint8_t)i;
+    }
+    
+    // Calculate checksum
+    uint16_t chksum = inet_chksum(icmp_packet, sizeof(icmp_packet));
+    icmp_packet[2] = chksum & 0xff; 
+    icmp_packet[3] = chksum >> 8;   
 
     while(1) {
       printf("sending ...\n");
-      struct pbuf *p = pbuf_alloc(PBUF_IP, data_len, PBUF_RAM);
-      memcpy(p->payload, data, data_len);
+      struct pbuf *p = pbuf_alloc(PBUF_IP, sizeof(icmp_packet), PBUF_RAM);
+      //memcpy(p->payload, data, data_len);
+      memcpy(p->payload, icmp_packet, sizeof(icmp_packet));
       LOCK_TCPIP_CORE();
-      ip4_output(p, &ipaddr, &dest_ip, 0, 0, IP_PROTO_UDP);
+      //ip4_output(p, &ipaddr, &dest_ip, 0, 0, IP_PROTO_UDP);
+      ip4_output(p, &ipaddr, &dest_ip, 64, 0, IP_PROTO_ICMP);
       UNLOCK_TCPIP_CORE();
 
       pbuf_free(p);

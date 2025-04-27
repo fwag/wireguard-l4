@@ -14,8 +14,14 @@ Netdev::output(struct pbuf *p)
 
   return vdev.tx([p] (L4virtio::Driver::Virtio_net_device::Packet &pkt)
     {
-      pkt.hdr.hdr_len = PBUF_TRANSPORT;
-      return pbuf_copy_partial(p, &pkt.data, sizeof(pkt.data), ETH_PAD_SIZE);
+      pkt.hdr.hdr_len = PBUF_TRANSPORT;        
+      u16_t pkt_len = pbuf_copy_partial(p, &pkt.data, sizeof(pkt.data), ETH_PAD_SIZE);
+      /*printf("vio txbuf <%u>: ", pkt_len);
+      for (int i=0; i < pkt_len; i++) {
+          printf("%02X", pkt.data[i]);
+      }
+      printf("\n");*/  
+      return pkt_len;
     }
   ) ? ERR_OK : ERR_MEM;
 }
@@ -30,6 +36,13 @@ Netdev::input_loop()
       l4_uint32_t len;
       auto descno = vdev.wait_rx(&len);
       auto &pkt = vdev.rx_pkt(descno);
+      
+      /*printf("vio rxbuf <%u>: ", len);
+      for (int i=0; i < len; i++) {
+          printf("%02X", pkt.data[i]);
+      }
+      printf("\n");*/      
+      
       auto pbuf = pbuf_alloced_custom(PBUF_RAW, len, PBUF_REF,
                                       &rx_pbufs[descno].pbuf, &pkt.data,
                                       sizeof(pkt.data));
@@ -67,7 +80,7 @@ Netdev::init_netif()
 #if LWIP_IPV4
   netif.output = etharp_output;
 #endif
-#if LWIP_IPV6
+#if 0 //LWIP_IPV6
   netif.output_ip6 = ethip6_output;
 #endif
   netif.linkoutput = _output;
@@ -77,7 +90,6 @@ Netdev::init_netif()
   if (vdev.feature_negotiated(L4VIRTIO_NET_F_MAC))
   {
     auto &cfg = vdev.device_config();
-
 
     static_assert(sizeof(netif.hwaddr) >= sizeof(cfg.mac),
                   "Virtio MAC address larger than lwIP hwaddr");
@@ -96,17 +108,23 @@ Netdev::init_netif()
     netif.hwaddr_len = ETH_HWADDR_LEN;
   }
 
+  printf("HW ADDR: %02X%02X%02X%02X%02X%02X\n",
+    netif.hwaddr[0],netif.hwaddr[1],netif.hwaddr[2],
+    netif.hwaddr[3],netif.hwaddr[4],netif.hwaddr[5]);
+
   netif.flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP |
                 NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;
 
-#if LWIP_IPV6
+#if 0//LWIP_IPV6
   netif_create_ip6_linklocal_address(&netif, 1);
 #endif
 
 
   // Use as default for outgoing routes if this is the first network interface
-  if (!netif_default)
+  /*if (!netif_default) {
+    printf("netif_set_default vn ...\n");
     netif_set_default(&netif);
+  }*/
 
   return ERR_OK;
 }
@@ -126,10 +144,18 @@ Netdev::Netdev(L4::Cap<L4virtio::Device> vnet) : netif(), vdev()
     rx_pbufs[i].ndev = this;
   }
 
+  ip4_addr_t ipaddr;
+  ip4_addr_t netmask;
+  ip4_addr_t gateway;
+
+  IP4_ADDR(&ipaddr, 192, 168, 30, 10);
+  IP4_ADDR(&netmask, 255, 255, 255, 0);
+  IP4_ADDR(&gateway, 192, 168, 30, 100);
+
   // Register network interface
   if (netifapi_netif_add(&netif,
 #if LWIP_IPV4
-                         nullptr, nullptr, nullptr, // No IPv4 address
+                        &ipaddr, &netmask, &gateway, // No IPv4 address
 #endif
                          this, _init_netif, tcpip_input))
     throw L4::Runtime_error(-L4_ENODEV, "Failed to initialize network interface");

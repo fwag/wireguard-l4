@@ -75,7 +75,7 @@ module[arch=amd64,fname=virt.dtb]  dtb/virt-pc.dtb
 module[arch=amd64,fname=linux,nostrip]    https://l4re.org/download/Linux-kernel/x86-64/bzImage-6.6.8
 module[arch=amd64,fname=ramdisk.cpio.gz]  https://l4re.org/download/ramdisks/ramdisk-amd64.cpio.gz
 # evm
-module l4vio_switch #to remove
+#module l4vio_switch #to remove
 module l4vio_net_p2p
 module[shell] echo $SRC_BASE_ABS/pkg/uvmm/configs/vmm.lua
 module wgl4.cfg

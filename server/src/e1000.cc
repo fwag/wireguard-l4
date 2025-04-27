@@ -361,7 +361,8 @@ void E1000::fire()
     {
         // good threshold
     }
-    else if (status & 0x80)
+    
+    if (status & 0x80)
     {
         handleReceive();
     }
